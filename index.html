@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Refactored Interactive Retirement Calculator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://unpkg.com/heroicons@1.0.6/dist/solid.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #111827; color: #f9fafb; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #374151; }
+        ::-webkit-scrollbar-thumb { background: #9CA3AF; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #D1D5DB; }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#111827">
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        const initialCrash = { id: 'crash_initial_1', startYear: 10, duration: 2, rate: 30 };
+        const initialValues = {
+            initialInvestment: 1058360, monthlyExpense: 2200, healthInsurance: 400, travelExpense: 10000,
+            investmentReturn: 5, expenseGrowth: 3, fixedSubsidy: 5000, variableSubsidy: 38000,
+            subsidyGrowth: 3, variableSubsidyStartYear: 16, extraExpenseAmount: 50000, extraExpenseStartYear: 26,
+            crashes: [{...initialCrash}]
+        };
+        const initialValues2 = {...initialValues, investmentReturn: 6.5, crashes: [{...initialCrash, id: 'crash_initial_2'}]};
+
+        const inputFields = [
+            { key: 'initialInvestment', label: 'Initial Investment' }, { key: 'monthlyExpense', label: 'Monthly Basic Expenses' },
+            { key: 'healthInsurance', label: 'Monthly Health Insurance' }, { key: 'travelExpense', label: 'Annual Travel Expenses' },
+            { key: 'investmentReturn', label: 'Investment Return Rate', unit: '%' }, { key: 'expenseGrowth', label: 'Expense Inflation Rate', unit: '%' },
+            { key: 'fixedSubsidy', label: 'Fixed Subsidy' }, { key: 'variableSubsidy', label: 'Variable Subsidy' },
+            { key: 'subsidyGrowth', label: 'Subsidy Growth Rate (Variable)', unit: '%' }, { key: 'variableSubsidyStartYear', label: 'Variable Subsidy Start Year' },
+            { key: 'extraExpenseAmount', label: 'Extra Expense Amount' }, { key: 'extraExpenseStartYear', label: 'Extra Expense Start Year' },
+        ];
+
+        // --- Helper & Plugin Section ---
+        const formatCurrency = (amount) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(amount);
+        
+        const runSimulation = (currentInputs) => {
+            let investment = currentInputs.initialInvestment;
+            const yearlyData = [];
+            const maxYears = 60;
+            let fundDepletionYear = maxYears + 1;
+            for (let year = 1; year <= maxYears; year++) {
+                const startBalance = investment;
+                const baseMonthlyExpense = (currentInputs.monthlyExpense || 0) * 12 * Math.pow(1 + (currentInputs.expenseGrowth || 0) / 100, year - 1);
+                const healthInsuranceCost = (currentInputs.healthInsurance || 0) * 12 * Math.pow(1 + (currentInputs.expenseGrowth || 0) / 100, year - 1);
+                const travelCost = (currentInputs.travelExpense || 0) * Math.pow(1 + (currentInputs.expenseGrowth || 0) / 100, year - 1);
+                let totalExpense = baseMonthlyExpense + healthInsuranceCost + travelCost;
+                if (year >= currentInputs.extraExpenseStartYear) totalExpense += (currentInputs.extraExpenseAmount || 0) * Math.pow(1 + (currentInputs.expenseGrowth || 0) / 100, year - currentInputs.extraExpenseStartYear);
+                let totalSubsidy = (currentInputs.fixedSubsidy || 0);
+                if (year >= currentInputs.variableSubsidyStartYear) totalSubsidy += (currentInputs.variableSubsidy || 0) * Math.pow(1 + (currentInputs.subsidyGrowth || 0) / 100, year - currentInputs.variableSubsidyStartYear);
+                const netExpense = totalExpense - totalSubsidy;
+                investment -= netExpense;
+                if (investment > 0) {
+                    const activeCrash = currentInputs.crashes.find(c => year >= (c.startYear||0) && year < (c.startYear||0) + (c.duration||0) && (c.duration||0) > 0 && (c.rate||0) > 0);
+                    if (activeCrash) {
+                        const annualFactor = Math.pow(1 - (activeCrash.rate || 0) / 100, 1 / (activeCrash.duration));
+                        investment *= annualFactor;
+                    } else {
+                        investment *= (1 + (currentInputs.investmentReturn || 0) / 100);
+                    }
+                }
+                if (investment <= 0 && fundDepletionYear > maxYears) fundDepletionYear = year;
+                yearlyData.push({ year, startBalance: Math.round(startBalance), endBalance: Math.max(0, Math.round(investment)) });
+            }
+            return { yearlyData, fundDepletionYear };
+        };
+        
+        const verticalLinePlugin = {
+            id: 'verticalLine',
+            afterDraw: chart => {
+                if (chart.tooltip?._active?.length) {
+                    const ctx = chart.ctx;
+                    const x = chart.tooltip._active[0].element.x;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.moveTo(x, chart.scales.y.top);
+                    ctx.lineTo(x, chart.scales.y.bottom);
+                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        };
+        Chart.register(verticalLinePlugin);
+
+        // --- Reusable Child Components ---
+        const CrashInputGroup = ({ crashes, onCrashChange, onCommit, onAddCrash, onRemoveCrash }) => (
+            <div className="mt-6">
+                <h3 className="text-lg font-semibold text-gray-300 mb-3 border-b border-gray-700 pb-2">Market Crash Scenarios</h3>
+                <div className="space-y-3">
+                    {crashes.map((crash, index) => (
+                         <div key={crash.id} className="grid grid-cols-10 gap-2 items-center">
+                            <div className="col-span-3">
+                                <label className="text-xs text-gray-400">Crash Start Year</label>
+                                <input type="number" step="any" value={crash.startYear} onChange={(e) => onCrashChange(index, 'startYear', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                            </div>
+                            <div className="col-span-3">
+                                <label className="text-xs text-gray-400">Duration (Yrs)</label>
+                                <input type="number" step="any" value={crash.duration} onChange={(e) => onCrashChange(index, 'duration', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                            </div>
+                            <div className="col-span-3">
+                                <label className="text-xs text-gray-400">Total Rate (%)</label>
+                                <input type="number" step="any" value={crash.rate} onChange={(e) => onCrashChange(index, 'rate', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                            </div>
+                            <div className="col-span-1 pt-5">
+                                <button onClick={() => onRemoveCrash(index)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                    {crashes.length < 7 && (
+                       <button onClick={onAddCrash} className="w-full mt-2 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md flex items-center justify-center">
+                           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
+                           Add Crash
+                       </button>
+                    )}
+                </div>
+            </div>
+        );
+
+        const ScenarioPanel = ({ scenario, onInputChange, onCrashChange, onCommit, onAddCrash, onRemoveCrash, titleColor }) => (
+             <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                <h2 className={`text-xl md:text-2xl font-bold text-center ${titleColor} mb-4`}>Scenario {scenario.index + 1}</h2>
+                {inputFields.map(({ key, label, unit }) => (
+                    <div key={key} className="grid grid-cols-2 items-center gap-x-4 mb-2">
+                        <label className="text-sm font-medium text-gray-300 text-right">{label} {unit ? `(${unit})` : ''}</label>
+                        <input type="number" step="any" value={scenario.data[key]} onChange={(e) => onInputChange(key, e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className={`w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md shadow-sm focus:ring-${titleColor.split('-')[1]}-400 focus:border-${titleColor.split('-')[1]}-400`}/>
+                    </div>
+                ))}
+                <CrashInputGroup crashes={scenario.data.crashes} onCrashChange={onCrashChange} onCommit={onCommit} onAddCrash={onAddCrash} onRemoveCrash={onRemoveCrash} />
+            </div>
+        );
+
+        const ComparisonChart = ({ data1, data2 }) => {
+            const chartRef = useRef(null);
+            useEffect(() => {
+                if (!chartRef.current) return;
+                const chartInstance = new Chart(chartRef.current.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        labels: data1.map(d => d.year),
+                        datasets: [
+                            { label: 'Scenario 1 Year-End Balance', data: data1.map(d => d.endBalance), borderColor: 'rgb(250, 204, 21)', backgroundColor: 'rgba(250, 204, 21, 0.2)', fill: true, tension: 0.3 },
+                            { label: 'Scenario 2 Year-End Balance', data: data2.map(d => d.endBalance), borderColor: 'rgb(244, 114, 182)', backgroundColor: 'rgba(244, 114, 182, 0.2)', fill: true, tension: 0.3 }
+                        ]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { labels: { color: '#D1D5DB' } }, tooltip: { mode: 'index', intersect: false, callbacks: { label: (c) => `${c.dataset.label}: ${formatCurrency(c.parsed.y)}` } } },
+                        scales: { y: { ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000) + 'k' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }, x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } }
+                    }
+                });
+                return () => chartInstance.destroy();
+            }, [data1, data2]);
+            return <div className="relative h-96"><canvas ref={chartRef}></canvas></div>;
+        };
+
+        // --- Main App Component ---
+        const RetirementCalculator = () => {
+            const [scenarios, setScenarios] = useState(() => [
+                JSON.parse(localStorage.getItem('retirementInputs1')) || initialValues,
+                JSON.parse(localStorage.getItem('retirementInputs2')) || initialValues2
+            ]);
+            const [localScenarios, setLocalScenarios] = useState(scenarios);
+            const [results, setResults] = useState([{}, {}]);
+            const [detailedData, setDetailedData] = useState([[], []]);
+
+            useEffect(() => {
+                const { yearlyData, fundDepletionYear } = runSimulation(scenarios[0]);
+                setDetailedData(prev => [yearlyData, prev[1]]);
+                setResults(prev => [{ years: fundDepletionYear }, prev[1]]);
+                localStorage.setItem('retirementInputs1', JSON.stringify(scenarios[0]));
+                setLocalScenarios(prev => [scenarios[0], prev[1]]);
+            }, [scenarios[0]]);
+
+            useEffect(() => {
+                const { yearlyData, fundDepletionYear } = runSimulation(scenarios[1]);
+                setDetailedData(prev => [prev[0], yearlyData]);
+                setResults(prev => [prev[0], { years: fundDepletionYear }]);
+                localStorage.setItem('retirementInputs2', JSON.stringify(scenarios[1]));
+                setLocalScenarios(prev => [prev[0], scenarios[1]]);
+            }, [scenarios[1]]);
+
+            const updateLocalScenario = (index, updateFunc) => {
+                setLocalScenarios(prev => {
+                    const newScenarios = [...prev];
+                    newScenarios[index] = updateFunc(newScenarios[index]);
+                    return newScenarios;
+                });
+            };
+
+            const handleLocalInputChange = (index, field, value) => updateLocalScenario(index, scenario => ({ ...scenario, [field]: value }));
+            const handleLocalCrashChange = (index, crashIndex, field, value) => updateLocalScenario(index, scenario => {
+                const newCrashes = [...scenario.crashes];
+                newCrashes[crashIndex] = { ...newCrashes[crashIndex], [field]: value };
+                return { ...scenario, crashes: newCrashes };
+            });
+            const handleAddCrash = (index) => updateLocalScenario(index, scenario => ({ ...scenario, crashes: [...scenario.crashes, { id: `crash_${new Date().getTime()}`, startYear: 0, duration: 0, rate: 0 }] }));
+            
+            const handleRemoveCrash = (index, crashIndex) => {
+                const newScenarios = [...localScenarios];
+                newScenarios[index].crashes = newScenarios[index].crashes.filter((_, i) => i !== crashIndex);
+                setLocalScenarios(newScenarios);
+                commitInputs(index, newScenarios[index]); // Commit immediately on removal
+            };
+            
+            const commitInputs = useCallback((index, dataToCommit) => {
+                const scenarioToCommit = dataToCommit || localScenarios[index];
+                const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
+                
+                const parsedCrashes = scenarioToCommit.crashes.map(crash => ({
+                    ...crash,
+                    startYear: getParsedValue(crash.startYear),
+                    duration: getParsedValue(crash.duration),
+                    rate: getParsedValue(crash.rate)
+                }));
+                
+                const parsedScenario = { ...scenarioToCommit, crashes: parsedCrashes };
+                inputFields.forEach(field => {
+                    parsedScenario[field.key] = getParsedValue(scenarioToCommit[field.key]);
+                });
+
+                setScenarios(prev => {
+                    const newScenarios = [...prev];
+                    newScenarios[index] = parsedScenario;
+                    return newScenarios;
+                });
+            }, [localScenarios]);
+            
+            const handleCommitEvent = (index, e) => {
+                if(e.type === 'blur' || e.key === 'Enter') {
+                    commitInputs(index);
+                    if (e.key === 'Enter') e.target.blur();
+                }
+            };
+
+            return (
+                <div className="max-w-screen-xl mx-auto p-4 sm:p-6 lg:p-8">
+                    <header className="text-center mb-8">
+                        <h1 className="text-3xl sm:text-4xl font-bold">Advanced Retirement Calculator</h1>
+                        <p className="text-gray-400 mt-2">Compare scenarios with multiple market crashes to stress-test your plan. Your data is saved automatically.</p>
+                    </header>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                       <ScenarioPanel 
+                            scenario={{ index: 0, data: localScenarios[0] }}
+                            onInputChange={(...args) => handleLocalInputChange(0, ...args)}
+                            onCrashChange={(...args) => handleLocalCrashChange(0, ...args)}
+                            onCommit={(e) => handleCommitEvent(0, e)}
+                            onAddCrash={() => handleAddCrash(0)}
+                            onRemoveCrash={(...args) => handleRemoveCrash(0, ...args)}
+                            titleColor="text-yellow-400"
+                        />
+                        <ScenarioPanel 
+                            scenario={{ index: 1, data: localScenarios[1] }}
+                            onInputChange={(...args) => handleLocalInputChange(1, ...args)}
+                            onCrashChange={(...args) => handleLocalCrashChange(1, ...args)}
+                            onCommit={(e) => handleCommitEvent(1, e)}
+                            onAddCrash={() => handleAddCrash(1)}
+                            onRemoveCrash={(...args) => handleRemoveCrash(1, ...args)}
+                            titleColor="text-pink-400"
+                        />
+                    </div>
+
+                    <div className="space-y-8 mt-8">
+                        <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                            <h2 className="text-2xl font-semibold mb-4 text-center">Asset Growth Comparison Chart</h2>
+                            <ComparisonChart data1={detailedData[0]} data2={detailedData[1]} />
+                        </div>
+                        
+                        <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                            <h2 className="text-2xl font-semibold mb-6 text-center">Simulation Summary Comparison</h2>
+                            <div className="grid grid-cols-3 gap-4 text-center items-center">
+                                <div className="font-medium text-gray-200 text-right">Fund Depletion Year</div>
+                                <div className="p-2 bg-yellow-400/10 rounded-lg">
+                                    <div className="text-2xl font-bold text-yellow-400">{results[0].years > 60 ? '60+ Years' : `Year ${results[0].years}`}</div>
+                                    <div className="text-sm font-normal text-gray-400">({scenarios[0].investmentReturn}% Return Rate)</div>
+                                </div>
+                                <div className="p-2 bg-pink-400/10 rounded-lg">
+                                    <div className="text-2xl font-bold text-pink-400">{results[1].years > 60 ? '60+ Years' : `Year ${results[1].years}`}</div>
+                                    <div className="text-sm font-normal text-gray-400">({scenarios[1].investmentReturn}% Return Rate)</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                            <h2 className="text-2xl font-semibold mb-4 text-center">Detailed Year-by-Year Comparison</h2>
+                            <div className="overflow-x-auto max-h-[80vh] relative">
+                                <table className="w-full border-collapse text-sm">
+                                    <thead className="bg-gray-900 sticky top-0">
+                                        <tr>
+                                            <th className="border border-gray-600 p-2">Year</th>
+                                            <th className="border border-gray-600 p-2 text-yellow-400">Scenario 1 Year-End Balance</th>
+                                            <th className="border border-gray-600 p-2 text-pink-400">Scenario 2 Year-End Balance</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {detailedData[0].map((d1, index) => (
+                                            <tr key={index} className="hover:bg-gray-700">
+                                                <td className="border border-gray-600 p-2 text-center font-medium">{index + 1}</td>
+                                                <td className={`border border-gray-600 p-2 text-right font-semibold ${d1.endBalance <= 0 ? 'text-red-500' : 'text-gray-200'}`}>{formatCurrency(d1.endBalance)}</td>
+                                                <td className={`border border-gray-600 p-2 text-right font-semibold ${detailedData[1][index]?.endBalance <= 0 ? 'text-red-500' : 'text-gray-200'}`}>{formatCurrency(detailedData[1][index]?.endBalance)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<RetirementCalculator />, document.getElementById('root'));
+    </script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./service-worker.js')
+            .then(registration => console.log('ServiceWorker registration successful'))
+            .catch(err => console.log('ServiceWorker registration failed: ', err));
+        });
+      }
+    </script>
+</body>
+</html>
