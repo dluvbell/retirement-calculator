@@ -20,8 +20,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#111827">
 </head>
 <body>
     <div id="root"></div>
@@ -29,25 +27,29 @@
     <script type="text/babel">
         const { useState, useEffect, useRef, useCallback } = React;
 
+        // --- 초기값 설정 ---
         const initialCrash = { id: 'crash_initial_1', startYear: 10, duration: 2, rate: 30 };
+        const initialUnexpectedExpense = { id: 'ue_initial_1', year: 20, amount: 50000 };
+
         const initialValues = {
             initialInvestment: 1058360, monthlyExpense: 2200, healthInsurance: 400, travelExpense: 10000,
             investmentReturn: 5, expenseGrowth: 3, fixedSubsidy: 5000, variableSubsidy: 38000,
             subsidyGrowth: 3, variableSubsidyStartYear: 16, extraExpenseAmount: 50000, extraExpenseStartYear: 26,
-            crashes: [{...initialCrash}]
+            crashes: [{...initialCrash}],
+            unexpectedExpenses: [{...initialUnexpectedExpense}] // 예상치 못한 지출 초기값 추가
         };
-        const initialValues2 = {...initialValues, investmentReturn: 6.5, crashes: [{...initialCrash, id: 'crash_initial_2'}]};
+        const initialValues2 = {...initialValues, investmentReturn: 6.5, crashes: [{...initialCrash, id: 'crash_initial_2'}], unexpectedExpenses: [{...initialUnexpectedExpense, id: 'ue_initial_2'}]};
 
         const inputFields = [
-            { key: 'initialInvestment', label: 'Initial Investment' }, { key: 'monthlyExpense', label: 'Monthly Basic Expenses' },
-            { key: 'healthInsurance', label: 'Monthly Health Insurance' }, { key: 'travelExpense', label: 'Annual Travel Expenses' },
-            { key: 'investmentReturn', label: 'Investment Return Rate', unit: '%' }, { key: 'expenseGrowth', label: 'Expense Inflation Rate', unit: '%' },
-            { key: 'fixedSubsidy', label: 'Fixed Subsidy' }, { key: 'variableSubsidy', label: 'Variable Subsidy' },
-            { key: 'subsidyGrowth', label: 'Subsidy Growth Rate (Variable)', unit: '%' }, { key: 'variableSubsidyStartYear', label: 'Variable Subsidy Start Year' },
-            { key: 'extraExpenseAmount', label: 'Extra Expense Amount' }, { key: 'extraExpenseStartYear', label: 'Extra Expense Start Year' },
+            { key: 'initialInvestment', label: '초기 투자금' }, { key: 'monthlyExpense', label: '월 기본 생활비' },
+            { key: 'healthInsurance', label: '월 건강 보험료' }, { key: 'travelExpense', label: '연간 여행 경비' },
+            { key: 'investmentReturn', label: '투자 수익률', unit: '%' }, { key: 'expenseGrowth', label: '지출 상승률', unit: '%' },
+            { key: 'fixedSubsidy', label: '고정 보조금' }, { key: 'variableSubsidy', label: '변동 보조금' },
+            { key: 'subsidyGrowth', label: '보조금 상승률 (변동)', unit: '%' }, { key: 'variableSubsidyStartYear', label: '변동 보조금 시작 연도' },
+            { key: 'extraExpenseAmount', label: '추가 지출 금액' }, { key: 'extraExpenseStartYear', label: '추가 지출 시작 연도' },
         ];
 
-        // --- Helper & Plugin Section ---
+        // --- 헬퍼 및 플러그인 섹션 ---
         const formatCurrency = (amount) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(amount);
         
         const runSimulation = (currentInputs) => {
@@ -60,12 +62,28 @@
                 const baseMonthlyExpense = (currentInputs.monthlyExpense || 0) * 12 * Math.pow(1 + (currentInputs.expenseGrowth || 0) / 100, year - 1);
                 const healthInsuranceCost = (currentInputs.healthInsurance || 0) * 12 * Math.pow(1 + (currentInputs.expenseGrowth || 0) / 100, year - 1);
                 const travelCost = (currentInputs.travelExpense || 0) * Math.pow(1 + (currentInputs.expenseGrowth || 0) / 100, year - 1);
+                
                 let totalExpense = baseMonthlyExpense + healthInsuranceCost + travelCost;
-                if (year >= currentInputs.extraExpenseStartYear) totalExpense += (currentInputs.extraExpenseAmount || 0) * Math.pow(1 + (currentInputs.expenseGrowth || 0) / 100, year - currentInputs.extraExpenseStartYear);
+                
+                if (year >= currentInputs.extraExpenseStartYear) {
+                    totalExpense += (currentInputs.extraExpenseAmount || 0) * Math.pow(1 + (currentInputs.expenseGrowth || 0) / 100, year - currentInputs.extraExpenseStartYear);
+                }
+
+                // 예상치 못한 지출 계산 로직 추가
+                if (currentInputs.unexpectedExpenses && currentInputs.unexpectedExpenses.length > 0) {
+                    const unexpectedForYear = currentInputs.unexpectedExpenses.filter(ue => parseInt(ue.year, 10) === year);
+                    if (unexpectedForYear.length > 0) {
+                        const totalUnexpected = unexpectedForYear.reduce((sum, expense) => sum + (expense.amount || 0), 0);
+                        totalExpense += totalUnexpected;
+                    }
+                }
+                
                 let totalSubsidy = (currentInputs.fixedSubsidy || 0);
                 if (year >= currentInputs.variableSubsidyStartYear) totalSubsidy += (currentInputs.variableSubsidy || 0) * Math.pow(1 + (currentInputs.subsidyGrowth || 0) / 100, year - currentInputs.variableSubsidyStartYear);
+                
                 const netExpense = totalExpense - totalSubsidy;
                 investment -= netExpense;
+
                 if (investment > 0) {
                     const activeCrash = currentInputs.crashes.find(c => year >= (c.startYear||0) && year < (c.startYear||0) + (c.duration||0) && (c.duration||0) > 0 && (c.rate||0) > 0);
                     if (activeCrash) {
@@ -100,45 +118,59 @@
         };
         Chart.register(verticalLinePlugin);
 
-        // --- Reusable Child Components ---
+        // --- 재사용 가능한 자식 컴포넌트 ---
         const CrashInputGroup = ({ crashes, onCrashChange, onCommit, onAddCrash, onRemoveCrash }) => (
             <div className="mt-6">
-                <h3 className="text-lg font-semibold text-gray-300 mb-3 border-b border-gray-700 pb-2">Market Crash Scenarios</h3>
+                <h3 className="text-lg font-semibold text-gray-300 mb-3 border-b border-gray-700 pb-2">시장 붕괴 시나리오</h3>
                 <div className="space-y-3">
                     {crashes.map((crash, index) => (
                          <div key={crash.id} className="grid grid-cols-10 gap-2 items-center">
-                            <div className="col-span-3">
-                                <label className="text-xs text-gray-400">Crash Start Year</label>
-                                <input type="number" step="any" value={crash.startYear} onChange={(e) => onCrashChange(index, 'startYear', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                            <div className="col-span-3"><label className="text-xs text-gray-400">붕괴 시작 연도</label><input type="number" step="any" value={crash.startYear} onChange={(e) => onCrashChange(index, 'startYear', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div>
+                            <div className="col-span-3"><label className="text-xs text-gray-400">지속 기간 (년)</label><input type="number" step="any" value={crash.duration} onChange={(e) => onCrashChange(index, 'duration', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div>
+                            <div className="col-span-3"><label className="text-xs text-gray-400">총 하락률 (%)</label><input type="number" step="any" value={crash.rate} onChange={(e) => onCrashChange(index, 'rate', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div>
+                            <div className="col-span-1 pt-5"><button onClick={() => onRemoveCrash(index)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg></button></div>
+                        </div>
+                    ))}
+                    {crashes.length < 7 && (<button onClick={onAddCrash} className="w-full mt-2 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md flex items-center justify-center"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>붕괴 시나리오 추가</button>)}
+                </div>
+            </div>
+        );
+
+        // --- 예상치 못한 지출 입력 그룹 컴포넌트 (신규) ---
+        const UnexpectedExpenseInputGroup = ({ expenses, onExpenseChange, onCommit, onAddExpense, onRemoveExpense }) => (
+            <div className="mt-6">
+                <h3 className="text-lg font-semibold text-gray-300 mb-3 border-b border-gray-700 pb-2">예상치 못한 지출</h3>
+                <div className="space-y-3">
+                    {(expenses || []).map((expense, index) => (
+                         <div key={expense.id} className="grid grid-cols-10 gap-2 items-center">
+                            <div className="col-span-4">
+                                <label className="text-xs text-gray-400">지출 연도</label>
+                                <input type="number" step="1" value={expense.year} onChange={(e) => onExpenseChange(index, 'year', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
                             </div>
-                            <div className="col-span-3">
-                                <label className="text-xs text-gray-400">Duration (Yrs)</label>
-                                <input type="number" step="any" value={crash.duration} onChange={(e) => onCrashChange(index, 'duration', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                            </div>
-                            <div className="col-span-3">
-                                <label className="text-xs text-gray-400">Total Rate (%)</label>
-                                <input type="number" step="any" value={crash.rate} onChange={(e) => onCrashChange(index, 'rate', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                            <div className="col-span-5">
+                                <label className="text-xs text-gray-400">금액</label>
+                                <input type="number" step="any" value={expense.amount} onChange={(e) => onExpenseChange(index, 'amount', e.target.value)} onBlur={onCommit} onKeyDown={onCommit} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
                             </div>
                             <div className="col-span-1 pt-5">
-                                <button onClick={() => onRemoveCrash(index)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
+                                <button onClick={() => onRemoveExpense(index)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
                                 </button>
                             </div>
                         </div>
                     ))}
-                    {crashes.length < 7 && (
-                       <button onClick={onAddCrash} className="w-full mt-2 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md flex items-center justify-center">
+                    {(expenses || []).length < 10 && (
+                       <button onClick={onAddExpense} className="w-full mt-2 py-2 px-4 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-md flex items-center justify-center">
                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
-                           Add Crash
+                           예상치 못한 지출 추가
                        </button>
                     )}
                 </div>
             </div>
         );
 
-        const ScenarioPanel = ({ scenario, onInputChange, onCrashChange, onCommit, onAddCrash, onRemoveCrash, titleColor }) => (
+        const ScenarioPanel = ({ scenario, onInputChange, onCrashChange, onCommit, onAddCrash, onRemoveCrash, onExpenseChange, onAddExpense, onRemoveExpense, titleColor }) => (
              <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                <h2 className={`text-xl md:text-2xl font-bold text-center ${titleColor} mb-4`}>Scenario {scenario.index + 1}</h2>
+                <h2 className={`text-xl md:text-2xl font-bold text-center ${titleColor} mb-4`}>시나리오 {scenario.index + 1}</h2>
                 {inputFields.map(({ key, label, unit }) => (
                     <div key={key} className="grid grid-cols-2 items-center gap-x-4 mb-2">
                         <label className="text-sm font-medium text-gray-300 text-right">{label} {unit ? `(${unit})` : ''}</label>
@@ -146,6 +178,7 @@
                     </div>
                 ))}
                 <CrashInputGroup crashes={scenario.data.crashes} onCrashChange={onCrashChange} onCommit={onCommit} onAddCrash={onAddCrash} onRemoveCrash={onRemoveCrash} />
+                <UnexpectedExpenseInputGroup expenses={scenario.data.unexpectedExpenses} onExpenseChange={onExpenseChange} onCommit={onCommit} onAddExpense={onAddExpense} onRemoveExpense={onRemoveExpense} />
             </div>
         );
 
@@ -158,8 +191,8 @@
                     data: {
                         labels: data1.map(d => d.year),
                         datasets: [
-                            { label: 'Scenario 1 Year-End Balance', data: data1.map(d => d.endBalance), borderColor: 'rgb(250, 204, 21)', backgroundColor: 'rgba(250, 204, 21, 0.2)', fill: true, tension: 0.3 },
-                            { label: 'Scenario 2 Year-End Balance', data: data2.map(d => d.endBalance), borderColor: 'rgb(244, 114, 182)', backgroundColor: 'rgba(244, 114, 182, 0.2)', fill: true, tension: 0.3 }
+                            { label: '시나리오 1 연말 잔액', data: data1.map(d => d.endBalance), borderColor: 'rgb(250, 204, 21)', backgroundColor: 'rgba(250, 204, 21, 0.2)', fill: true, tension: 0.3 },
+                            { label: '시나리오 2 연말 잔액', data: data2.map(d => d.endBalance), borderColor: 'rgb(244, 114, 182)', backgroundColor: 'rgba(244, 114, 182, 0.2)', fill: true, tension: 0.3 }
                         ]
                     },
                     options: {
@@ -173,7 +206,7 @@
             return <div className="relative h-96"><canvas ref={chartRef}></canvas></div>;
         };
 
-        // --- Main App Component ---
+        // --- 메인 앱 컴포넌트 ---
         const RetirementCalculator = () => {
             const [scenarios, setScenarios] = useState(() => [
                 JSON.parse(localStorage.getItem('retirementInputs1')) || initialValues,
@@ -208,32 +241,53 @@
             };
 
             const handleLocalInputChange = (index, field, value) => updateLocalScenario(index, scenario => ({ ...scenario, [field]: value }));
+            
             const handleLocalCrashChange = (index, crashIndex, field, value) => updateLocalScenario(index, scenario => {
                 const newCrashes = [...scenario.crashes];
                 newCrashes[crashIndex] = { ...newCrashes[crashIndex], [field]: value };
                 return { ...scenario, crashes: newCrashes };
             });
             const handleAddCrash = (index) => updateLocalScenario(index, scenario => ({ ...scenario, crashes: [...scenario.crashes, { id: `crash_${new Date().getTime()}`, startYear: 0, duration: 0, rate: 0 }] }));
-            
             const handleRemoveCrash = (index, crashIndex) => {
                 const newScenarios = [...localScenarios];
                 newScenarios[index].crashes = newScenarios[index].crashes.filter((_, i) => i !== crashIndex);
                 setLocalScenarios(newScenarios);
-                commitInputs(index, newScenarios[index]); // Commit immediately on removal
+                commitInputs(index, newScenarios[index]);
+            };
+
+            // 예상치 못한 지출 핸들러 함수들 (신규)
+            const handleLocalExpenseChange = (index, expenseIndex, field, value) => updateLocalScenario(index, scenario => {
+                const newExpenses = [...(scenario.unexpectedExpenses || [])];
+                newExpenses[expenseIndex] = { ...newExpenses[expenseIndex], [field]: value };
+                return { ...scenario, unexpectedExpenses: newExpenses };
+            });
+            const handleAddExpense = (index) => updateLocalScenario(index, scenario => ({ ...scenario, unexpectedExpenses: [...(scenario.unexpectedExpenses || []), { id: `ue_${new Date().getTime()}`, year: 0, amount: 0 }] }));
+            const handleRemoveExpense = (index, expenseIndex) => {
+                const newScenarios = [...localScenarios];
+                newScenarios[index].unexpectedExpenses = newScenarios[index].unexpectedExpenses.filter((_, i) => i !== expenseIndex);
+                setLocalScenarios(newScenarios);
+                commitInputs(index, newScenarios[index]);
             };
             
             const commitInputs = useCallback((index, dataToCommit) => {
                 const scenarioToCommit = dataToCommit || localScenarios[index];
                 const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
                 
-                const parsedCrashes = scenarioToCommit.crashes.map(crash => ({
+                const parsedCrashes = (scenarioToCommit.crashes || []).map(crash => ({
                     ...crash,
                     startYear: getParsedValue(crash.startYear),
                     duration: getParsedValue(crash.duration),
                     rate: getParsedValue(crash.rate)
                 }));
+
+                // 예상치 못한 지출 데이터 파싱 (신규)
+                const parsedExpenses = (scenarioToCommit.unexpectedExpenses || []).map(exp => ({
+                    ...exp,
+                    year: getParsedValue(exp.year),
+                    amount: getParsedValue(exp.amount)
+                }));
                 
-                const parsedScenario = { ...scenarioToCommit, crashes: parsedCrashes };
+                const parsedScenario = { ...scenarioToCommit, crashes: parsedCrashes, unexpectedExpenses: parsedExpenses };
                 inputFields.forEach(field => {
                     parsedScenario[field.key] = getParsedValue(scenarioToCommit[field.key]);
                 });
@@ -255,8 +309,8 @@
             return (
                 <div className="max-w-screen-xl mx-auto p-4 sm:p-6 lg:p-8">
                     <header className="text-center mb-8">
-                        <h1 className="text-3xl sm:text-4xl font-bold">Advanced Retirement Calculator</h1>
-                        <p className="text-gray-400 mt-2">Compare scenarios with multiple market crashes to stress-test your plan. Your data is saved automatically.</p>
+                        <h1 className="text-3xl sm:text-4xl font-bold">고급 은퇴 계산기</h1>
+                        <p className="text-gray-400 mt-2">여러 시장 붕괴 및 예상치 못한 지출 시나리오를 비교하여 계획을 점검하세요. 데이터는 자동으로 저장됩니다.</p>
                     </header>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -267,6 +321,9 @@
                             onCommit={(e) => handleCommitEvent(0, e)}
                             onAddCrash={() => handleAddCrash(0)}
                             onRemoveCrash={(...args) => handleRemoveCrash(0, ...args)}
+                            onExpenseChange={(...args) => handleLocalExpenseChange(0, ...args)}
+                            onAddExpense={() => handleAddExpense(0)}
+                            onRemoveExpense={(...args) => handleRemoveExpense(0, ...args)}
                             titleColor="text-yellow-400"
                         />
                         <ScenarioPanel 
@@ -276,69 +333,63 @@
                             onCommit={(e) => handleCommitEvent(1, e)}
                             onAddCrash={() => handleAddCrash(1)}
                             onRemoveCrash={(...args) => handleRemoveCrash(1, ...args)}
+                            onExpenseChange={(...args) => handleLocalExpenseChange(1, ...args)}
+                            onAddExpense={() => handleAddExpense(1)}
+                            onRemoveExpense={(...args) => handleRemoveExpense(1, ...args)}
                             titleColor="text-pink-400"
                         />
                     </div>
 
                     <div className="space-y-8 mt-8">
                         <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                            <h2 className="text-2xl font-semibold mb-4 text-center">Asset Growth Comparison Chart</h2>
+                            <h2 className="text-2xl font-semibold mb-4 text-center">자산 성장 비교 차트</h2>
                             <ComparisonChart data1={detailedData[0]} data2={detailedData[1]} />
                         </div>
                         
                         <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                            <h2 className="text-2xl font-semibold mb-6 text-center">Simulation Summary Comparison</h2>
-                            <div className="grid grid-cols-3 gap-4 text-center items-center">
-                                <div className="font-medium text-gray-200 text-right">Fund Depletion Year</div>
-                                <div className="p-2 bg-yellow-400/10 rounded-lg">
-                                    <div className="text-2xl font-bold text-yellow-400">{results[0].years > 60 ? '60+ Years' : `Year ${results[0].years}`}</div>
-                                    <div className="text-sm font-normal text-gray-400">({scenarios[0].investmentReturn}% Return Rate)</div>
-                                </div>
-                                <div className="p-2 bg-pink-400/10 rounded-lg">
-                                    <div className="text-2xl font-bold text-pink-400">{results[1].years > 60 ? '60+ Years' : `Year ${results[1].years}`}</div>
-                                    <div className="text-sm font-normal text-gray-400">({scenarios[1].investmentReturn}% Return Rate)</div>
-                                </div>
-                            </div>
-                        </div>
+                             <h2 className="text-2xl font-semibold mb-6 text-center">시뮬레이션 요약 비교</h2>
+                             <div className="grid grid-cols-3 gap-4 text-center items-center">
+                                 <div className="font-medium text-gray-200 text-right">자금 고갈 연도</div>
+                                 <div className="p-2 bg-yellow-400/10 rounded-lg">
+                                     <div className="text-2xl font-bold text-yellow-400">{results[0].years > 60 ? '60+ 년' : `${results[0].years}년차`}</div>
+                                     <div className="text-sm font-normal text-gray-400">({scenarios[0].investmentReturn}% 수익률)</div>
+                                 </div>
+                                 <div className="p-2 bg-pink-400/10 rounded-lg">
+                                     <div className="text-2xl font-bold text-pink-400">{results[1].years > 60 ? '60+ 년' : `${results[1].years}년차`}</div>
+                                     <div className="text-sm font-normal text-gray-400">({scenarios[1].investmentReturn}% 수익률)</div>
+                                 </div>
+                             </div>
+                         </div>
 
                         <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                            <h2 className="text-2xl font-semibold mb-4 text-center">Detailed Year-by-Year Comparison</h2>
-                            <div className="overflow-x-auto max-h-[80vh] relative">
-                                <table className="w-full border-collapse text-sm">
-                                    <thead className="bg-gray-900 sticky top-0">
-                                        <tr>
-                                            <th className="border border-gray-600 p-2">Year</th>
-                                            <th className="border border-gray-600 p-2 text-yellow-400">Scenario 1 Year-End Balance</th>
-                                            <th className="border border-gray-600 p-2 text-pink-400">Scenario 2 Year-End Balance</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {detailedData[0].map((d1, index) => (
-                                            <tr key={index} className="hover:bg-gray-700">
-                                                <td className="border border-gray-600 p-2 text-center font-medium">{index + 1}</td>
-                                                <td className={`border border-gray-600 p-2 text-right font-semibold ${d1.endBalance <= 0 ? 'text-red-500' : 'text-gray-200'}`}>{formatCurrency(d1.endBalance)}</td>
-                                                <td className={`border border-gray-600 p-2 text-right font-semibold ${detailedData[1][index]?.endBalance <= 0 ? 'text-red-500' : 'text-gray-200'}`}>{formatCurrency(detailedData[1][index]?.endBalance)}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
+                             <h2 className="text-2xl font-semibold mb-4 text-center">상세 연도별 비교</h2>
+                             <div className="overflow-x-auto max-h-[80vh] relative">
+                                 <table className="w-full border-collapse text-sm">
+                                     <thead className="bg-gray-900 sticky top-0">
+                                         <tr>
+                                             <th className="border border-gray-600 p-2">연차</th>
+                                             <th className="border border-gray-600 p-2 text-yellow-400">시나리오 1 연말 잔액</th>
+                                             <th className="border border-gray-600 p-2 text-pink-400">시나리오 2 연말 잔액</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody>
+                                         {detailedData[0].map((d1, index) => (
+                                             <tr key={index} className="hover:bg-gray-700">
+                                                 <td className="border border-gray-600 p-2 text-center font-medium">{index + 1}</td>
+                                                 <td className={`border border-gray-600 p-2 text-right font-semibold ${d1.endBalance <= 0 ? 'text-red-500' : 'text-gray-200'}`}>{formatCurrency(d1.endBalance)}</td>
+                                                 <td className={`border border-gray-600 p-2 text-right font-semibold ${detailedData[1][index]?.endBalance <= 0 ? 'text-red-500' : 'text-gray-200'}`}>{formatCurrency(detailedData[1][index]?.endBalance)}</td>
+                                             </tr>
+                                         ))}
+                                     </tbody>
+                                 </table>
+                             </div>
+                         </div>
                     </div>
                 </div>
             );
         };
 
         ReactDOM.render(<RetirementCalculator />, document.getElementById('root'));
-    </script>
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./service-worker.js')
-            .then(registration => console.log('ServiceWorker registration successful'))
-            .catch(err => console.log('ServiceWorker registration failed: ', err));
-        });
-      }
     </script>
 </body>
 </html>
