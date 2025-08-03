@@ -361,8 +361,14 @@
                 localStorage.setItem(`retirementInputs${index + 1}`, JSON.stringify(scenarioData));
             };
 
-            useEffect(() => runAndSetResults(0, scenarios[0]), [scenarios[0]]);
-            useEffect(() => runAndSetResults(1, scenarios[1]), [scenarios[1]]);
+            useEffect(() => {
+                runAndSetResults(0, scenarios[0]);
+            }, [scenarios[0]]);
+            
+            useEffect(() => {
+                runAndSetResults(1, scenarios[1]);
+            }, [scenarios[1]]);
+
 
             const updateLocalScenario = (index, updateFunc) => {
                 setLocalScenarios(prev => {
@@ -372,31 +378,40 @@
                 });
             };
 
-            const handleLocalInputChange = (index, field, value) => updateLocalScenario(index, scenario => ({ ...scenario, [field]: value }));
+            const handleLocalInputChange = (index, field, value) => {
+                updateLocalScenario(index, scenario => ({ ...scenario, [field]: value }));
+            };
             
-            const handleDynamicEventChange = (index, type, itemIndex, field, value) => updateLocalScenario(index, scenario => {
-                const newItems = [...(scenario[type] || [])];
-                newItems[itemIndex] = { ...newItems[itemIndex], [field]: value };
-                return { ...scenario, [type]: newItems };
-            });
-
-            const handleAddDynamicEvent = (index, type) => updateLocalScenario(index, scenario => {
-                const newItem = { id: `${type}_${new Date().getTime()}` };
-                if (type === 'crashes') {
-                    newItem.year = 0; newItem.duration = 0; newItem.rate = 0;
-                } else {
-                    newItem.year = 0; newItem.amount = 0;
-                }
-                return { ...scenario, [type]: [...(scenario[type] || []), newItem] };
-            });
-
-            const handleRemoveDynamicEvent = (index, type, itemIndex) => {
-                const newScenarios = [...localScenarios];
-                newScenarios[index][type] = newScenarios[index][type].filter((_, i) => i !== itemIndex);
-                setLocalScenarios(newScenarios);
-                commitInputs(index, newScenarios[index]);
+            const handleDynamicEventChange = (index, type, itemIndex, field, value) => {
+                updateLocalScenario(index, scenario => {
+                    const newItems = [...(scenario[type] || [])];
+                    newItems[itemIndex] = { ...newItems[itemIndex], [field]: value };
+                    return { ...scenario, [type]: newItems };
+                });
             };
 
+            const handleAddDynamicEvent = (index, type) => {
+                updateLocalScenario(index, scenario => {
+                    const newItem = { id: `${type}_${new Date().getTime()}` };
+                    if (type === 'crashes') {
+                        newItem.year = 0; newItem.duration = 0; newItem.rate = 0;
+                    } else {
+                        newItem.year = 0; newItem.amount = 0;
+                    }
+                    return { ...scenario, [type]: [...(scenario[type] || []), newItem] };
+                });
+            };
+
+            const handleRemoveDynamicEvent = (index, type, itemIndex) => {
+                updateLocalScenario(index, scenario => {
+                    const newItems = [...scenario[type]];
+                    newItems.splice(itemIndex, 1);
+                    const finalScenario = { ...scenario, [type]: newItems };
+                    commitInputs(index, finalScenario);
+                    return finalScenario;
+                });
+            };
+            
             const commitInputs = useCallback((index, dataToCommit) => {
                 const scenarioToCommit = dataToCommit || localScenarios[index];
                 const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
@@ -426,7 +441,7 @@
                     newScenarios[index] = parsedScenario;
                     return newScenarios;
                 });
-            }, []);
+            }, [localScenarios]);
             
             const handleCommitEvent = (index, e) => {
                 if(e.type === 'blur' || e.key === 'Enter') {
@@ -439,11 +454,13 @@
                 const numValue = parseFloat(value);
                 if (isNaN(numValue)) return;
 
-                updateLocalScenario(index, scenario => {
-                    const newScenario = { ...scenario, [field]: parseFloat(numValue.toFixed(2)) };
-                    commitInputs(index, newScenario);
-                    return newScenario;
+                const newLocalScenario = { ...localScenarios[index], [field]: parseFloat(numValue.toFixed(2)) };
+                setLocalScenarios(prev => {
+                    const newScenarios = [...prev];
+                    newScenarios[index] = newLocalScenario;
+                    return newScenarios;
                 });
+                commitInputs(index, newLocalScenario);
             };
 
             const isAnySimulationReady = scenarios.some(s => s.startYear <= s.endYear);
