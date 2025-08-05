@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -487,6 +487,7 @@
         const ComparisonChart = ({ scenarios, simulationResults, colors }) => {
             const chartRef = useRef(null);
             const chartInstanceRef = useRef(null);
+            const isComparisonView = scenarios.length > 1;
 
             useEffect(() => {
                 if (!chartRef.current || simulationResults.length === 0) return;
@@ -525,14 +526,70 @@
                     data: { labels, datasets },
                     options: {
                         responsive: true, maintainAspectRatio: false,
-                        plugins: { legend: { labels: { color: '#D1D5DB' } }, tooltip: { mode: 'index', intersect: false, callbacks: { title: (items) => `Year: ${items[0].label}`, label: (ctx) => `${ctx.dataset.label}: ${formatCurrency(ctx.parsed.y)}` } } },
-                        scales: { y: { ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000) + 'k' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }, x: { title: { display: true, text: 'Year', color: '#9CA3AF' }, ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } }
+                        plugins: { 
+                            legend: { labels: { color: '#D1D5DB' } }, 
+                            tooltip: { 
+                                mode: 'index', 
+                                intersect: false, 
+                                callbacks: { 
+                                    title: (items) => {
+                                        const year = parseInt(items[0].label, 10);
+                                        return `Year: ${year}`;
+                                    },
+                                    label: (ctx) => {
+                                        const year = parseInt(ctx.label, 10);
+                                        const scenario = scenarios[ctx.datasetIndex];
+                                        const balance = formatCurrency(ctx.parsed.y);
+                                        if (scenario && scenario.birthYear) {
+                                            const age = year - parseInt(scenario.birthYear);
+                                            return `${ctx.dataset.label}: ${balance} (Age: ${age})`;
+                                        }
+                                        return `${ctx.dataset.label}: ${balance}`;
+                                    }
+                                } 
+                            } 
+                        },
+                        scales: { 
+                            y: { 
+                                ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000) + 'k' }, 
+                                grid: { color: 'rgba(255, 255, 255, 0.1)' } 
+                            }, 
+                            x: { 
+                                title: { display: true, text: isComparisonView ? 'Year' : 'Year / Age', color: '#9CA3AF' }, 
+                                grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                                ticks: { 
+                                    color: '#9CA3AF',
+                                    autoSkip: false,
+                                    callback: function(value, index, ticks) {
+                                        const year = this.getLabelForValue(value);
+                                        
+                                        const firstScenario = scenarios[0];
+                                        if (!firstScenario || !firstScenario.birthYear) {
+                                            return null;
+                                        }
+
+                                        const birthYear = parseInt(firstScenario.birthYear, 10);
+                                        const age = year - birthYear;
+
+                                        if (age >= 0 && age % 5 === 0) {
+                                            if (isComparisonView) {
+                                                return year.toString(); // Comparison: Only show year
+                                            } else {
+                                                return [year.toString(), age.toString()]; // Single view: Show year and age
+                                            }
+                                        }
+                                        
+                                        return null;
+                                    }
+                                }
+                            } 
+                        }
                     }
                 });
                 return () => { if (chartInstanceRef.current) chartInstanceRef.current.destroy(); };
-            }, [scenarios, simulationResults, colors]);
+            }, [scenarios, simulationResults, colors, isComparisonView]);
 
-            return <div className="relative h-96"><canvas ref={chartRef}></canvas></div>;
+            return <div className="relative h-80"><canvas ref={chartRef}></canvas></div>;
         };
         
         // --- Main App Component ---
@@ -733,12 +790,28 @@
                                      <h2 className="text-2xl font-semibold mb-6 text-center">Simulation Summary Comparison</h2>
                                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-center items-center">
                                          <div className="font-medium text-gray-200 text-right hidden md:block">Fund Depletion</div>
-                                         {savedScenarios.map((s, index) => (
-                                            <div key={s.id} className="p-2 rounded-lg" style={{backgroundColor: colors[index % colors.length].replace('rgb', 'rgba').replace(')', ', 0.1)')}}>
-                                                 <div className="text-xl font-bold" style={{color: colors[index % colors.length]}}>{simulationResults[index]?.fundDepletionYear > s.endYear ? `Sustained` : `Year ${simulationResults[index]?.fundDepletionYear}`}</div>
-                                                 <div className="text-sm font-normal text-gray-400">{s.name}</div>
-                                             </div>
-                                         ))}
+                                         {savedScenarios.map((s, index) => {
+                                             const result = simulationResults[index];
+                                             const scenario = s;
+                                             let depletionText;
+
+                                             if (!result || !scenario.birthYear) {
+                                                 depletionText = 'N/A';
+                                             } else if (result.fundDepletionYear > scenario.endYear) {
+                                                 depletionText = 'Sustained';
+                                             } else {
+                                                 const depletionYear = result.fundDepletionYear;
+                                                 const depletionAge = depletionYear - parseInt(scenario.birthYear, 10);
+                                                 depletionText = `Year ${depletionYear} (Age: ${depletionAge})`;
+                                             }
+
+                                             return (
+                                                <div key={s.id} className="p-2 rounded-lg" style={{backgroundColor: colors[index % colors.length].replace('rgb', 'rgba').replace(')', ', 0.1)')}}>
+                                                     <div className="text-xl font-bold" style={{color: colors[index % colors.length]}}>{depletionText}</div>
+                                                     <div className="text-sm font-normal text-gray-400">{s.name}</div>
+                                                 </div>
+                                             );
+                                         })}
                                      </div>
                                  </div>
 
