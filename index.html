@@ -86,12 +86,12 @@
                 example: "e.g., 3% based on the average inflation rate."
             },
             fixedSubsidy: {
-                description: "Fixed annual income from government or institutional sources.",
-                example: "e.g., $15,000 per year from CPP/OAS."
+                description: "Annual income that is NOT adjusted for inflation.",
+                example: "e.g., Interest from a GIC or bond."
             },
             variableSubsidy: {
-                description: "Variable income that starts in a specific year.",
-                example: "e.g., $30,000 per year from RRSP/LIRA withdrawals."
+                description: "Annual income that IS adjusted for inflation.",
+                example: "e.g., Pensions, OAS, CPP, GIS."
             },
             variableSubsidyStartYear: {
                 description: "The year when the variable subsidy payments begin.",
@@ -114,20 +114,20 @@
                 example: "e.g., If Rate is 30% and Duration is 2 years, the total loss is 30% after 2 years."
             },
             expenseYear: {
-                description: "The year into the simulation when an unexpected expense occurs. Applied at the start of the year.",
-                example: "For an end-of-year expense, set to the next year."
+                description: "The year an unexpected expense occurs, applied at the start of the year.",
+                example: "e.g., To apply at the start of Year 5, set to Year 5. To apply at the end of Year 5, set to Year 6."
             },
             expenseAmount: {
                 description: "The total amount of the unexpected expense.",
-                example: "e.g., $40,000 for a car replacement."
+                example: "e.g., Medical surgery, car purchase, or paying off a mortgage."
             },
             incomeYear: {
-                description: "The year into the simulation when a lump-sum income is received. Applied at the start of the year.",
-                example: "For an end-of-year income, set to the next year."
+                description: "The year a lump-sum income is received, applied at the start of the year.",
+                example: "e.g., To apply at the start of Year 5, set to Year 5. To apply at the end of Year 5, set to Year 6."
             },
             incomeAmount: {
                 description: "The total amount of the lump-sum income.",
-                example: "e.g., $200,000 from selling a property."
+                example: "e.g., Inheritance, lottery win, or selling a property."
             },
         };
 
