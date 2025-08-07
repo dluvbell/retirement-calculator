@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>고급 은퇴 플래너</title>
+    <title>Advanced Retirement Planner</title>
     
     <!-- External Libraries -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -62,11 +62,11 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
         
-        // 객체 깊은 복사 유틸리티
+        // Deep copy utility
         const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
         const TODAY_YEAR = new Date().getFullYear();
         
-        // 새 시나리오 생성 함수
+        // Function to create a new scenario
         const createNewScenario = (name) => ({
             id: new Date().getTime(),
             name: name,
@@ -78,18 +78,18 @@
                 investmentReturn: 6,
             },
             expenses: [
-                { id: 1, name: '주거비/공과금', amount: 24000, growthRate: 3 },
-                { id: 2, name: '식료품비', amount: 12000, growthRate: 3 },
+                { id: 1, name: 'Housing/Utilities', amount: 24000, growthRate: 3 },
+                { id: 2, name: 'Food/Groceries', amount: 12000, growthRate: 3 },
             ],
             incomes: [
                 { id: 1, name: 'CPP/OAS', amount: 20000, startYear: 2045, growthRate: 2.5 },
             ],
             oneTimeEvents: [
-                { id: 1, type: 'expense', name: '자녀 결혼', amount: '50000', year: '2040' },
+                { id: 1, type: 'expense', name: 'Child\'s Wedding', amount: '50000', year: '2040' },
             ],
         });
 
-        // 툴팁 컴포넌트
+        // Tooltip Component
         const Tooltip = ({ text }) => (
             <div className="tooltip ml-1">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
@@ -99,7 +99,7 @@
             </div>
         );
 
-        // --- 데이터 입력 탭 컴포넌트 ---
+        // --- Data Entry Component ---
         const DataEntryTab = ({ items, setItems, fields, birthYear }) => {
             const handleItemChange = (id, field, value) => {
                 setItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
@@ -148,7 +148,7 @@
                                                         <input type={field.type || 'text'} value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md" placeholder={field.placeholder || ''} step={field.step || 'any'} />
                                                     )}
                                                     { (field.key === 'startYear' || field.key === 'year') && ageAtEvent !== null && ageAtEvent >= 0 && (
-                                                        <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">(만 {ageAtEvent}세)</div>
+                                                        <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">(Age: {ageAtEvent})</div>
                                                     )}
                                                 </div>
                                             ))}
@@ -167,13 +167,13 @@
                     })}
                     <button onClick={handleAddItem} className="w-full mt-4 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md flex items-center justify-center">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
-                        항목 추가
+                        Add Item
                     </button>
                 </div>
             );
         };
 
-        // --- 비교 결과 컴포넌트 ---
+        // --- Comparison Results Component ---
         const ComparisonResults = ({ scenarios, simulationResults }) => {
             const chartRef = useRef(null);
             const chartInstanceRef = useRef(null);
@@ -228,12 +228,12 @@
             
             return (
                 <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 mt-6">
-                    <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">비교 결과</h2>
+                    <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">Comparison Results</h2>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mb-6">
                         {simulationResults.map((result, index) => {
                             const scenario = scenarios[index];
                             const age = result.fundDepletionYear > scenario.settings.endYear ? null : result.fundDepletionYear - scenario.settings.birthYear;
-                            const depletionText = age ? `${result.fundDepletionYear}년 (만 ${age}세)` : '자금 유지';
+                            const depletionText = age ? `${result.fundDepletionYear} (Age: ${age})` : 'Sustained';
                             return (
                                 <div key={scenario.id} className="p-3 rounded-lg" style={{backgroundColor: colors[index % colors.length] + '22'}}>
                                     <div className="text-sm font-semibold" style={{color: colors[index % colors.length]}}>{scenario.name}</div>
@@ -247,11 +247,11 @@
             );
         };
 
-        // --- 메인 앱 컴포넌트 ---
+        // --- Main App Component ---
         const App = () => {
             const [scenarios, setScenarios] = useState(() => {
                 const saved = localStorage.getItem('retirementScenarios');
-                return saved ? JSON.parse(saved) : [createNewScenario('시나리오 1')];
+                return saved ? JSON.parse(saved) : [createNewScenario('Scenario 1')];
             });
             const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
             const [activeDataTab, setActiveDataTab] = useState('settings');
@@ -271,7 +271,7 @@
             
             const handleAddScenario = () => {
                 if (scenarios.length < 3) {
-                    const newScenario = createNewScenario(`시나리오 ${scenarios.length + 1}`);
+                    const newScenario = createNewScenario(`Scenario ${scenarios.length + 1}`);
                     setScenarios(prev => [...prev, newScenario]);
                     setActiveScenarioId(newScenario.id);
                 }
@@ -282,7 +282,7 @@
                     const scenarioToCopy = scenarios.find(s => s.id === id);
                     const newScenario = deepCopy(scenarioToCopy);
                     newScenario.id = new Date().getTime();
-                    newScenario.name = `${scenarioToCopy.name} (복사)`;
+                    newScenario.name = `${scenarioToCopy.name} (Copy)`;
                     setScenarios(prev => [...prev, newScenario]);
                     setActiveScenarioId(newScenario.id);
                 }
@@ -354,34 +354,34 @@
             };
             
             const expenseFields = [
-                { key: 'name', label: '항목명', placeholder: '예: 주거비', className: 'sm:col-span-11', row: 1, defaultValue: '' },
-                { key: 'amount', label: '연간 금액', type: 'number', placeholder: '24000', className: 'sm:col-span-7', row: 2, defaultValue: 0 },
-                { key: 'growthRate', label: '상승률 (%)', type: 'number', placeholder: '3', step: '0.1', className: 'sm:col-span-3', row: 2, defaultValue: 3, hasDelete: true }
+                { key: 'name', label: 'Item Name', placeholder: 'e.g., Housing', className: 'sm:col-span-11', row: 1, defaultValue: '' },
+                { key: 'amount', label: 'Annual Amount', type: 'number', placeholder: '24000', className: 'sm:col-span-7', row: 2, defaultValue: 0 },
+                { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '3', step: '0.1', className: 'sm:col-span-3', row: 2, defaultValue: 3, hasDelete: true }
             ];
 
             const incomeFields = [
-                { key: 'name', label: '항목명', placeholder: '예: CPP 연금', className: 'sm:col-span-8', row: 1, defaultValue: '' },
-                { key: 'startYear', label: '시작 연도', type: 'number', placeholder: '2045', className: 'sm:col-span-4', row: 1, defaultValue: TODAY_YEAR + 20 },
-                { key: 'amount', label: '연간 금액 (현재 가치)', type: 'number', placeholder: '15000', className: 'sm:col-span-7', row: 2, defaultValue: 0 },
-                { key: 'growthRate', label: '상승률 (%)', type: 'number', placeholder: '2.5', step: '0.1', className: 'sm:col-span-4', row: 2, defaultValue: 2.5, hasDelete: true }
+                { key: 'name', label: 'Item Name', placeholder: 'e.g., CPP Pension', className: 'sm:col-span-8', row: 1, defaultValue: '' },
+                { key: 'startYear', label: 'Start Year', type: 'number', placeholder: '2045', className: 'sm:col-span-4', row: 1, defaultValue: TODAY_YEAR + 20 },
+                { key: 'amount', label: 'Annual Amount (Today\'s $)', type: 'number', placeholder: '15000', className: 'sm:col-span-7', row: 2, defaultValue: 0 },
+                { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '2.5', step: '0.1', className: 'sm:col-span-4', row: 2, defaultValue: 2.5, hasDelete: true }
             ];
             
             const oneTimeEventFields = [
-                { key: 'name', label: '항목명', placeholder: '예: 자동차 구매', className: 'sm:col-span-8', row: 1, defaultValue: '' },
-                { key: 'type', label: '유형', type: 'select', options: [{value: 'income', label: '수입'}, {value: 'expense', label: '지출'}], className: 'sm:col-span-4', row: 1, defaultValue: 'expense', tooltip: '일회성 수입(예: 상속)은 수입, 일회성 지출(예: 자동차 구매)은 지출로 선택하세요.' },
-                { key: 'amount', label: '금액', type: 'number', placeholder: '40000', className: 'sm:col-span-6', row: 2, defaultValue: 0 },
-                { key: 'year', label: '발생 연도', type: 'number', placeholder: '2035', className: 'sm:col-span-5', row: 2, defaultValue: TODAY_YEAR + 10, hasDelete: true }
+                { key: 'name', label: 'Item Name', placeholder: 'e.g., Car Purchase', className: 'sm:col-span-8', row: 1, defaultValue: '' },
+                { key: 'type', label: 'Type', type: 'select', options: [{value: 'income', label: 'Income'}, {value: 'expense', label: 'Expense'}], className: 'sm:col-span-4', row: 1, defaultValue: 'expense', tooltip: 'INC for one-time income (e.g., inheritance), EXP for one-time expense (e.g., car purchase).' },
+                { key: 'amount', label: 'Amount', type: 'number', placeholder: '40000', className: 'sm:col-span-6', row: 2, defaultValue: 0 },
+                { key: 'year', label: 'Year of Event', type: 'number', placeholder: '2035', className: 'sm:col-span-5', row: 2, defaultValue: TODAY_YEAR + 10, hasDelete: true }
             ];
 
             return (
                 <div className="max-w-screen-lg mx-auto p-4 sm:p-6 lg:p-8">
                     <header className="text-center mb-6">
-                        <h1 className="text-3xl sm:text-4xl font-bold">고급 은퇴 플래너</h1>
-                        <p className="text-gray-400 mt-2">다양한 시나리오를 만들고 비교하여 미래를 계획하세요.</p>
+                        <h1 className="text-3xl sm:text-4xl font-bold">Advanced Retirement Planner</h1>
+                        <p className="text-gray-400 mt-2">Create and compare multiple scenarios to plan your future.</p>
                     </header>
                     
                     <div className="p-4 bg-gray-900 rounded-xl mb-6 border border-gray-700">
-                        <h2 className="text-lg font-semibold text-center mb-3">시나리오 관리자</h2>
+                        <h2 className="text-lg font-semibold text-center mb-3">Scenario Manager</h2>
                         <div className="flex flex-wrap justify-center items-center gap-2">
                             {scenarios.map(s => (
                                 <div key={s.id} className="flex rounded-md shadow-sm">
@@ -399,7 +399,7 @@
                             {scenarios.length < 3 && (
                                 <button onClick={handleAddScenario} className="px-4 py-2 text-sm font-semibold bg-green-600 hover:bg-green-700 rounded-md flex items-center">
                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
-                                    시나리오 추가
+                                    Add Scenario
                                 </button>
                             )}
                         </div>
@@ -408,7 +408,7 @@
                     {activeScenario && <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
                         <div className="flex items-center justify-between mb-4">
                              <h2 className="text-xl font-bold flex-1 min-w-0">
-                                <span className="mr-2 flex-shrink-0">편집 중:</span>
+                                <span className="mr-2 flex-shrink-0">Editing:</span>
                                 <input 
                                     type="text" 
                                     value={activeScenario.name} 
@@ -422,32 +422,32 @@
                         </div>
                         
                         <div className="mb-6 flex flex-wrap justify-center border-b border-gray-600">
-                            <button onClick={() => setActiveDataTab('settings')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'settings' ? 'data-tab-active' : 'data-tab-inactive'}`}>기본 설정</button>
-                            <button onClick={() => setActiveDataTab('expenses')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'expenses' ? 'data-tab-active' : 'data-tab-inactive'}`}>반복 지출</button>
-                            <button onClick={() => setActiveDataTab('incomes')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'incomes' ? 'data-tab-active' : 'data-tab-inactive'}`}>반복 수입</button>
-                            <button onClick={() => setActiveDataTab('oneTime')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'oneTime' ? 'data-tab-active' : 'data-tab-inactive'}`}>일회성 이벤트</button>
+                            <button onClick={() => setActiveDataTab('settings')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'settings' ? 'data-tab-active' : 'data-tab-inactive'}`}>Settings</button>
+                            <button onClick={() => setActiveDataTab('expenses')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'expenses' ? 'data-tab-active' : 'data-tab-inactive'}`}>Recurring Expenses</button>
+                            <button onClick={() => setActiveDataTab('incomes')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'incomes' ? 'data-tab-active' : 'data-tab-inactive'}`}>Recurring Incomes</button>
+                            <button onClick={() => setActiveDataTab('oneTime')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'oneTime' ? 'data-tab-active' : 'data-tab-inactive'}`}>One-Time Events</button>
                         </div>
                         
                         <div className={activeDataTab === 'settings' ? '' : 'hidden'}>
                              <div className="grid grid-cols-12 gap-x-4 gap-y-4">
                                 <div className="col-span-4 md:col-span-2">
-                                    <label className="text-xs text-gray-400">출생 연도</label>
+                                    <label className="text-xs text-gray-400">Birth Year</label>
                                     <input type="number" value={activeScenario.settings.birthYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, birthYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
                                 </div>
                                  <div className="col-span-4 md:col-span-2">
-                                    <label className="text-xs text-gray-400">시작 연도</label>
+                                    <label className="text-xs text-gray-400">Start Year</label>
                                     <input type="number" value={activeScenario.settings.startYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, startYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
                                 </div>
                                  <div className="col-span-4 md:col-span-2">
-                                    <label className="text-xs text-gray-400">종료 연도</label>
+                                    <label className="text-xs text-gray-400">End Year</label>
                                     <input type="number" value={activeScenario.settings.endYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, endYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
                                 </div>
                                 <div className="col-span-6 md:col-span-3">
-                                    <label className="text-xs text-gray-400">평균 수익률 (%)</label>
+                                    <label className="text-xs text-gray-400">Avg. Return (%)</label>
                                     <input type="number" value={activeScenario.settings.investmentReturn} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, investmentReturn: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
                                 </div>
                                 <div className="col-span-6 md:col-span-3">
-                                    <label className="text-xs text-gray-400">초기 투자금</label>
+                                    <label className="text-xs text-gray-400">Initial Investment</label>
                                     <input type="number" value={activeScenario.settings.initialInvestment} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, initialInvestment: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
                                 </div>
                             </div>
@@ -467,9 +467,9 @@
                     <div className="mt-6">
                         <button onClick={runAllSimulations} disabled={isCalculating} className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white font-bold rounded-md text-lg flex items-center justify-center">
                             {isCalculating ? (
-                                <><div className="loader mr-3"></div><span>계산 중...</span></>
+                                <><div className="loader mr-3"></div><span>Calculating...</span></>
                             ) : (
-                                <span>모든 시나리오 실행 및 비교</span>
+                                <span>Run & Compare All Scenarios</span>
                             )}
                         </button>
                     </div>
