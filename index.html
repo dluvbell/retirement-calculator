@@ -177,7 +177,10 @@
         const ComparisonResults = ({ scenarios, simulationResults }) => {
             const chartRef = useRef(null);
             const chartInstanceRef = useRef(null);
+            const [selectedTableScenarioId, setSelectedTableScenarioId] = useState('none');
             const colors = ['#34D399', '#F472B6', '#FBBF24'];
+            const pointStyles = ['circle', 'triangle', 'star'];
+            const shapeIcons = ['●', '▲', '★'];
             const formatCurrency = (amount) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(amount);
 
             useEffect(() => {
@@ -205,6 +208,9 @@
                         fill: true,
                         tension: 0.3,
                         spanGaps: true,
+                        pointStyle: pointStyles[index % pointStyles.length],
+                        pointRadius: 5,
+                        pointHoverRadius: 7,
                     };
                 });
 
@@ -213,8 +219,50 @@
                     type: 'line',
                     data: { labels, datasets },
                     options: {
-                        responsive: true, maintainAspectRatio: false,
-                        plugins: { legend: { labels: { color: '#D1D5DB' } } },
+                        responsive: true, 
+                        maintainAspectRatio: false,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false,
+                        },
+                        plugins: { 
+                            legend: { 
+                                labels: { 
+                                    color: '#D1D5DB',
+                                    usePointStyle: true,
+                                } 
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    title: function(tooltipItems) {
+                                        if (tooltipItems.length > 0) {
+                                            const year = tooltipItems[0].label;
+                                            return `Year: ${year}`;
+                                        }
+                                        return '';
+                                    },
+                                    label: function(context) {
+                                        let label = context.dataset.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        if (context.parsed.y !== null) {
+                                            label += new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(context.parsed.y);
+                                        }
+                                        
+                                        const year = parseInt(context.label, 10);
+                                        const scenarioIndex = context.datasetIndex;
+                                        if (scenarios[scenarioIndex]) {
+                                            const birthYear = scenarios[scenarioIndex].settings.birthYear;
+                                            const age = year - birthYear;
+                                            label += ` (Age: ${age})`;
+                                        }
+                                        
+                                        return label;
+                                    }
+                                }
+                            }
+                        },
                         scales: { 
                             y: { ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000) + 'k' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }, 
                             x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } 
@@ -222,7 +270,9 @@
                     }
                 });
 
-            }, [simulationResults, scenarios]);
+            }, [scenarios, simulationResults]);
+
+            const selectedResult = simulationResults.find((r, i) => scenarios[i].id === Number(selectedTableScenarioId));
 
             if (!simulationResults || simulationResults.length === 0) return null;
             
@@ -236,13 +286,52 @@
                             const depletionText = age ? `${result.fundDepletionYear} (Age: ${age})` : 'Sustained';
                             return (
                                 <div key={scenario.id} className="p-3 rounded-lg" style={{backgroundColor: colors[index % colors.length] + '22'}}>
-                                    <div className="text-sm font-semibold" style={{color: colors[index % colors.length]}}>{scenario.name}</div>
+                                    <div className="text-sm font-semibold flex items-center justify-center" style={{color: colors[index % colors.length]}}>
+                                        <span className="mr-2 text-lg">{shapeIcons[index % shapeIcons.length]}</span>
+                                        {scenario.name}
+                                    </div>
                                     <div className="text-lg font-bold text-gray-200">{depletionText}</div>
                                 </div>
                             );
                         })}
                     </div>
                     <div className="relative h-96"><canvas ref={chartRef}></canvas></div>
+                    
+                    <div className="mt-6">
+                        <label htmlFor="table-select" className="block text-sm font-medium text-gray-300 mb-2">View Detailed Data:</label>
+                        <select 
+                            id="table-select"
+                            value={selectedTableScenarioId} 
+                            onChange={e => setSelectedTableScenarioId(e.target.value)}
+                            className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md"
+                        >
+                            <option value="none">Hide Table</option>
+                            {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                    </div>
+
+                    {selectedResult && (
+                        <div className="mt-4 max-h-96 overflow-y-auto">
+                            <table className="w-full text-sm text-left text-gray-400">
+                                <thead className="text-xs text-gray-300 uppercase bg-gray-700/50 sticky top-0">
+                                    <tr>
+                                        <th scope="col" className="px-6 py-3">Year</th>
+                                        <th scope="col" className="px-6 py-3">Age</th>
+                                        <th scope="col" className="px-6 py-3">End-of-Year Balance</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {selectedResult.yearlyData.map(data => (
+                                        <tr key={data.year} className="border-b border-gray-700 hover:bg-gray-700/30">
+                                            <td className="px-6 py-2">{data.year}</td>
+                                            <td className="px-6 py-2">{data.age}</td>
+                                            <td className="px-6 py-2">{formatCurrency(data.endBalance)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
                 </div>
             );
         };
