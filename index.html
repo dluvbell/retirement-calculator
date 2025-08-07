@@ -543,22 +543,21 @@
                     </div>
 
                     {activeScenario && <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                        <div className="flex items-center justify-between mb-4">
-                             <h2 className="text-xl font-bold flex-1 min-w-0">
-                                <span className="mr-2 flex-shrink-0">Editing:</span>
-                                <input 
-                                    type="text" 
-                                    value={activeScenario.name} 
-                                    onChange={e => {
-                                        const newName = e.target.value;
-                                        updateActiveScenario(scenario => ({...scenario, name: newName}));
-                                    }}
-                                    className="bg-transparent text-blue-400 font-bold border-b-2 border-transparent focus:border-blue-400 outline-none w-full"
-                                />
-                             </h2>
+                        <div className="mb-4">
+                            <label className="text-sm font-medium text-gray-300 mb-1 block">Scenario Name</label>
+                            <input 
+                                type="text" 
+                                value={activeScenario.name} 
+                                onChange={e => {
+                                    const newName = e.target.value;
+                                    updateActiveScenario(scenario => ({...scenario, name: newName}));
+                                }}
+                                className="w-full bg-gray-900/50 border border-gray-600 text-blue-400 font-bold text-xl rounded-md p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                            />
                         </div>
                         
                         <div className="mb-6">
+                            <label className="text-sm font-medium text-gray-300 mb-1 block">Data Category</label>
                             <select 
                                 value={activeDataTab} 
                                 onChange={e => setActiveDataTab(e.target.value)}
