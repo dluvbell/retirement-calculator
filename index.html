@@ -108,6 +108,457 @@
             const handleAddItem = () => {
                 const newItem = { id: new Date().getTime() };
                 fields.forEach(field => newItem[field.key] = field.defaultValue);
+                setItems(prev => [...(prev || []), newItem]);
+            };
+
+            const handleRemoveItem = (id) => {
+                setItems(prev => prev.filter(item => item.id !== id));
+            };
+
+            return (
+                <div className="space-y-4">
+                    {(items || []).map(item => {
+                        const yearFieldKey = item.hasOwnProperty('startYear') ? 'startYear' : 'year';
+                        const itemYear = item[yearFieldKey];
+                        const ageAtEvent = (birthYear && itemYear && String(itemYear).length === 4) ?
+                            parseInt(itemYear, 10) - parseInt(birthYear, 10) : null;
+                        
+                        const fieldGroups = fields.reduce((acc, field) => {
+                            acc[field.row] = acc[field.row] || [];
+                            acc[field.row].push(field);
+                            return acc;
+                        }, {});
+
+                        return (
+                            <div key={item.id} className="p-4 bg-gray-900/50 rounded-lg border border-gray-700">
+                                <div className="flex flex-col space-y-2">
+                                    {Object.values(fieldGroups).map((rowFields, rowIndex) => (
+                                        <div key={rowIndex} className="grid grid-cols-12 gap-x-4 items-start">
+                                            {rowFields.map(field => (
+                                                <div key={field.key} className={`col-span-12 ${field.className}`}>
+                                                    <label className="text-xs text-gray-400 flex items-center">
+                                                        {field.label}
+                                                        {field.tooltip && <Tooltip text={field.tooltip} />}
+                                                    </label>
+                                                    {field.type === 'select' ? (
+                                                        <select value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
+                                                            {field.options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                                        </select>
+                                                    ) : (
+                                                        <input type={field.type || 'text'} value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md" placeholder={field.placeholder || ''} step={field.step || 'any'} />
+                                                    )}
+                                                    { (field.key === 'startYear' || field.key === 'year') && ageAtEvent !== null && ageAtEvent >= 0 && (
+                                                        <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">(Age: {ageAtEvent})</div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                            {rowFields.some(f => f.hasDelete) && (
+                                                 <div className="col-span-1 self-center">
+                                                    <button onClick={() => handleRemoveItem(item.id)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        );
+                    })}
+                    <button onClick={handleAddItem} className="w-full mt-4 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
+                        Add Item
+                    </button>
+                </div>
+            );
+        };
+
+        // --- Comparison Results Component ---
+        const ComparisonResults = ({ scenarios, simulationResults }) => {
+            const chartRef = useRef(null);
+            const chartInstanceRef = useRef(null);
+            const colors = ['#34D399', '#F472B6', '#FBBF24'];
+            const formatCurrency = (amount) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(amount);
+
+            useEffect(() => {
+                if (!simulationResults || simulationResults.length === 0 || !chartRef.current) return;
+                
+                if (chartInstanceRef.current) chartInstanceRef.current.destroy();
+
+                const allYears = simulationResults.flatMap(r => r.yearlyData.map(d => d.year));
+                if (allYears.length === 0) return;
+
+                const minYear = Math.min(...allYears);
+                const maxYear = Math.max(...allYears);
+                const labels = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
+
+                const datasets = simulationResults.map((result, index) => {
+                    const scenario = scenarios[index];
+                    const dataMap = new Map(result.yearlyData.map(d => [d.year, d.endBalance]));
+                    const chartData = labels.map(year => dataMap.has(year) ? dataMap.get(year) : null);
+
+                    return {
+                        label: scenario.name,
+                        data: chartData,
+                        borderColor: colors[index % colors.length],
+                        backgroundColor: colors[index % colors.length] + '33',
+                        fill: true,
+                        tension: 0.3,
+                        spanGaps: true,
+                    };
+                });
+
+                const ctx = chartRef.current.getContext('2d');
+                chartInstanceRef.current = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels, datasets },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: { legend: { labels: { color: '#D1D5DB' } } },
+                        scales: { 
+                            y: { ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000) + 'k' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }, 
+                            x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } 
+                        }
+                    }
+                });
+
+            }, [simulationResults, scenarios]);
+
+            if (!simulationResults || simulationResults.length === 0) return null;
+            
+            return (
+                <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 mt-6">
+                    <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">Comparison Results</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mb-6">
+                        {simulationResults.map((result, index) => {
+                            const scenario = scenarios[index];
+                            const age = result.fundDepletionYear > scenario.settings.endYear ? null : result.fundDepletionYear - scenario.settings.birthYear;
+                            const depletionText = age ? `${result.fundDepletionYear} (Age: ${age})` : 'Sustained';
+                            return (
+                                <div key={scenario.id} className="p-3 rounded-lg" style={{backgroundColor: colors[index % colors.length] + '22'}}>
+                                    <div className="text-sm font-semibold" style={{color: colors[index % colors.length]}}>{scenario.name}</div>
+                                    <div className="text-lg font-bold text-gray-200">{depletionText}</div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="relative h-96"><canvas ref={chartRef}></canvas></div>
+                </div>
+            );
+        };
+
+        // --- Main App Component ---
+        const App = () => {
+            const [scenarios, setScenarios] = useState(() => {
+                const saved = localStorage.getItem('retirementScenarios');
+                return saved ? JSON.parse(saved) : [createNewScenario('Scenario 1')];
+            });
+            const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
+            const [activeDataTab, setActiveDataTab] = useState('settings');
+            const [simulationResults, setSimulationResults] = useState([]);
+            const [isCalculating, setIsCalculating] = useState(false);
+            const resultsRef = useRef(null);
+
+            useEffect(() => {
+                localStorage.setItem('retirementScenarios', JSON.stringify(scenarios));
+            }, [scenarios]);
+
+            const activeScenario = scenarios.find(s => s.id === activeScenarioId) || scenarios[0];
+            
+            const updateActiveScenario = (updater) => {
+                setScenarios(prev => prev.map(s => s.id === activeScenarioId ? updater(s) : s));
+            };
+            
+            const handleAddScenario = () => {
+                if (scenarios.length < 3) {
+                    const newScenario = createNewScenario(`Scenario ${scenarios.length + 1}`);
+                    setScenarios(prev => [...prev, newScenario]);
+                    setActiveScenarioId(newScenario.id);
+                }
+            };
+
+            const handleCopyScenario = (id) => {
+                if (scenarios.length < 3) {
+                    const scenarioToCopy = scenarios.find(s => s.id === id);
+                    const newScenario = deepCopy(scenarioToCopy);
+                    newScenario.id = new Date().getTime();
+                    newScenario.name = `${scenarioToCopy.name} (Copy)`;
+                    setScenarios(prev => [...prev, newScenario]);
+                    setActiveScenarioId(newScenario.id);
+                }
+            };
+
+            const handleRemoveScenario = (id) => {
+                if (scenarios.length > 1) {
+                    const newScenarios = scenarios.filter(s => s.id !== id);
+                    setScenarios(newScenarios);
+                    if (activeScenarioId === id) {
+                        setActiveScenarioId(newScenarios[0].id);
+                    }
+                }
+            };
+
+            const runAllSimulations = () => {
+                setIsCalculating(true);
+                setSimulationResults([]);
+
+                setTimeout(() => {
+                    const results = scenarios.map(scenario => {
+                        const { settings, expenses, incomes, oneTimeEvents } = scenario;
+                        const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
+                        let investment = getParsedValue(settings.initialInvestment);
+                        const yearlyData = [];
+                        const startYear = getParsedValue(settings.startYear);
+                        const endYear = getParsedValue(settings.endYear);
+                        const birthYear = getParsedValue(settings.birthYear);
+                        let fundDepletionYear = endYear + 1;
+
+                        if (!startYear || !endYear || !birthYear || startYear > endYear) return null;
+
+                        for (let currentYear = startYear; currentYear <= endYear; currentYear++) {
+                            const age = currentYear - birthYear;
+                            const startBalance = investment;
+
+                            (oneTimeEvents || []).forEach(event => {
+                                if (getParsedValue(event.year) === currentYear) {
+                                    const amount = getParsedValue(event.amount);
+                                    if (event.type === 'income') investment += amount; else investment -= amount;
+                                }
+                            });
+
+                            let totalExpense = (expenses || []).reduce((sum, exp) => sum + (getParsedValue(exp.amount) * Math.pow(1 + getParsedValue(exp.growthRate) / 100, currentYear - startYear)), 0);
+                            
+                            let totalIncome = (incomes || []).reduce((sum, inc) => {
+                                if (currentYear >= getParsedValue(inc.startYear)) {
+                                    const yearsToStart = getParsedValue(inc.startYear) - TODAY_YEAR;
+                                    const amountAtStart = getParsedValue(inc.amount) * Math.pow(1 + getParsedValue(inc.growthRate) / 100, yearsToStart > 0 ? yearsToStart : 0);
+                                    const yearsFromStart = currentYear - getParsedValue(inc.startYear);
+                                    return sum + (amountAtStart * Math.pow(1 + getParsedValue(inc.growthRate) / 100, yearsFromStart > 0 ? yearsFromStart : 0));
+                                }
+                                return sum;
+                            }, 0);
+
+                            investment -= (totalExpense - totalIncome);
+                            if (investment > 0) investment *= (1 + getParsedValue(settings.investmentReturn) / 100);
+                            if (investment <= 0 && fundDepletionYear > endYear) fundDepletionYear = currentYear;
+                            
+                            yearlyData.push({ year: currentYear, age, startBalance: Math.round(startBalance), endBalance: Math.max(0, Math.round(investment)) });
+                        }
+                        return { yearlyData, fundDepletionYear };
+                    }).filter(Boolean);
+                    
+                    setSimulationResults(results);
+                    setIsCalculating(false);
+                    resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
+                }, 500);
+            };
+            
+            const expenseFields = [
+                { key: 'name', label: 'Item Name', placeholder: 'e.g., Housing', className: 'sm:col-span-11', row: 1, defaultValue: '' },
+                { key: 'amount', label: 'Annual Amount', type: 'number', placeholder: '24000', className: 'sm:col-span-7', row: 2, defaultValue: 0 },
+                { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '3', step: '0.1', className: 'sm:col-span-3', row: 2, defaultValue: 3, hasDelete: true }
+            ];
+
+            const incomeFields = [
+                { key: 'name', label: 'Item Name', placeholder: 'e.g., CPP Pension', className: 'sm:col-span-8', row: 1, defaultValue: '' },
+                { key: 'startYear', label: 'Start Year', type: 'number', placeholder: '2045', className: 'sm:col-span-4', row: 1, defaultValue: TODAY_YEAR + 20 },
+                { key: 'amount', label: 'Annual Amount (Today\'s $)', type: 'number', placeholder: '15000', className: 'sm:col-span-7', row: 2, defaultValue: 0 },
+                { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '2.5', step: '0.1', className: 'sm:col-span-4', row: 2, defaultValue: 2.5, hasDelete: true }
+            ];
+            
+            const oneTimeEventFields = [
+                { key: 'name', label: 'Item Name', placeholder: 'e.g., Car Purchase', className: 'sm:col-span-8', row: 1, defaultValue: '' },
+                { key: 'type', label: 'Type', type: 'select', options: [{value: 'income', label: 'Income'}, {value: 'expense', label: 'Expense'}], className: 'sm:col-span-4', row: 1, defaultValue: 'expense', tooltip: 'INC for one-time income (e.g., inheritance), EXP for one-time expense (e.g., car purchase).' },
+                { key: 'amount', label: 'Amount', type: 'number', placeholder: '40000', className: 'sm:col-span-6', row: 2, defaultValue: 0 },
+                { key: 'year', label: 'Year of Event', type: 'number', placeholder: '2035', className: 'sm:col-span-5', row: 2, defaultValue: TODAY_YEAR + 10, hasDelete: true }
+            ];
+
+            return (
+                <div className="max-w-screen-lg mx-auto p-4 sm:p-6 lg:p-8">
+                    <header className="text-center mb-6">
+                        <h1 className="text-3xl sm:text-4xl font-bold">Advanced Retirement Planner</h1>
+                        <p className="text-gray-400 mt-2">Create and compare multiple scenarios to plan your future.</p>
+                    </header>
+                    
+                    <div className="p-4 bg-gray-900 rounded-xl mb-6 border border-gray-700">
+                        <h2 className="text-lg font-semibold text-center mb-3">Scenario Manager</h2>
+                        <div className="flex flex-wrap justify-center items-center gap-2">
+                            {scenarios.map(s => (
+                                <div key={s.id} className="flex rounded-md shadow-sm">
+                                    <button onClick={() => setActiveScenarioId(s.id)} className={`px-4 py-2 text-sm font-semibold rounded-l-md ${activeScenarioId === s.id ? 'scenario-tab-active' : 'scenario-tab-inactive'}`}>
+                                        {s.name}
+                                    </button>
+                                    <button onClick={() => handleCopyScenario(s.id)} disabled={scenarios.length >= 3} className="px-2 py-2 bg-gray-600 hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-white" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" /></svg>
+                                    </button>
+                                     <button onClick={() => handleRemoveScenario(s.id)} disabled={scenarios.length <= 1} className="px-2 py-2 bg-red-800 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-r-md">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-white" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                    </button>
+                                </div>
+                            ))}
+                            {scenarios.length < 3 && (
+                                <button onClick={handleAddScenario} className="px-4 py-2 text-sm font-semibold bg-green-600 hover:bg-green-700 rounded-md flex items-center">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
+                                    Add Scenario
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {activeScenario && <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                        <div className="flex items-center justify-between mb-4">
+                             <h2 className="text-xl font-bold flex-1 min-w-0">
+                                <span className="mr-2 flex-shrink-0">Editing:</span>
+                                <input 
+                                    type="text" 
+                                    value={activeScenario.name} 
+                                    onChange={e => {
+                                        const newName = e.target.value;
+                                        updateActiveScenario(scenario => ({...scenario, name: newName}));
+                                    }}
+                                    className="bg-transparent text-blue-400 font-bold border-b-2 border-transparent focus:border-blue-400 outline-none w-full"
+                                />
+                             </h2>
+                        </div>
+                        
+                        <div className="mb-6 flex flex-wrap justify-center border-b border-gray-600">
+                            <button onClick={() => setActiveDataTab('settings')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'settings' ? 'data-tab-active' : 'data-tab-inactive'}`}>Settings</button>
+                            <button onClick={() => setActiveDataTab('expenses')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'expenses' ? 'data-tab-active' : 'data-tab-inactive'}`}>Recurring Expenses</button>
+                            <button onClick={() => setActiveDataTab('incomes')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'incomes' ? 'data-tab-active' : 'data-tab-inactive'}`}>Recurring Incomes</button>
+                            <button onClick={() => setActiveDataTab('oneTime')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'oneTime' ? 'data-tab-active' : 'data-tab-inactive'}`}>One-Time Events</button>
+                        </div>
+                        
+                        <div className={activeDataTab === 'settings' ? '' : 'hidden'}>
+                             <div className="grid grid-cols-12 gap-x-4 gap-y-4">
+                                <div className="col-span-4 md:col-span-2">
+                                    <label className="text-xs text-gray-400">Birth Year</label>
+                                    <input type="number" value={activeScenario.settings.birthYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, birthYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                </div>
+                                 <div className="col-span-4 md:col-span-2">
+                                    <label className="text-xs text-gray-400">Start Year</label>
+                                    <input type="number" value={activeScenario.settings.startYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, startYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                </div>
+                                 <div className="col-span-4 md:col-span-2">
+                                    <label className="text-xs text-gray-400">End Year</label>
+                                    <input type="number" value={activeScenario.settings.endYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, endYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                </div>
+                                <div className="col-span-6 md:col-span-3">
+                                    <label className="text-xs text-gray-400">Avg. Return (%)</label>
+                                    <input type="number" value={activeScenario.settings.investmentReturn} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, investmentReturn: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                </div>
+                                <div className="col-span-6 md:col-span-3">
+                                    <label className="text-xs text-gray-400">Initial Investment</label>
+                                    <input type="number" value={activeScenario.settings.initialInvestment} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, initialInvestment: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className={activeDataTab === 'expenses' ? '' : 'hidden'}>
+                            <DataEntryTab items={activeScenario.expenses} setItems={(updater) => updateActiveScenario(s => ({...s, expenses: updater(s.expenses)}))} fields={expenseFields} birthYear={activeScenario.settings.birthYear} />
+                        </div>
+                        <div className={activeDataTab === 'incomes' ? '' : 'hidden'}>
+                            <DataEntryTab items={activeScenario.incomes} setItems={(updater) => updateActiveScenario(s => ({...s, incomes: updater(s.incomes)}))} fields={incomeFields} birthYear={activeScenario.settings.birthYear} />
+                        </div>
+                        <div className={activeDataTab === 'oneTime' ? '' : 'hidden'}>
+                            <DataEntryTab items={activeScenario.oneTimeEvents} setItems={(updater) => updateActiveScenario(s => ({...s, oneTimeEvents: updater(s.oneTimeEvents)}))} fields={oneTimeEventFields} birthYear={activeScenario.settings.birthYear} />
+                        </div>
+                    </div>}
+
+                    <div className="mt-6">
+                        <button onClick={runAllSimulations} disabled={isCalculating} className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white font-bold rounded-md text-lg flex items-center justify-center">
+                            {isCalculating ? (
+                                <><div className="loader mr-3"></div><span>Calculating...</span></>
+                            ) : (
+                                <span>Run & Compare All Scenarios</span>
+                            )}
+                        </button>
+                    </div>
+
+                    <div ref={resultsRef}>
+                        <ComparisonResults scenarios={scenarios} simulationResults={simulationResults} />
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
+            visibility: hidden;
+            width: 220px;
+            background-color: #1f2937;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 10;
+            bottom: 150%;
+            left: 50%;
+            margin-left: -110px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            border: 1px solid #374151;
+        }
+        .tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        
+        // Deep copy utility
+        const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
+        const TODAY_YEAR = new Date().getFullYear();
+        
+        // Function to create a new scenario
+        const createNewScenario = (name) => ({
+            id: new Date().getTime(),
+            name: name,
+            settings: {
+                birthYear: 1980,
+                startYear: TODAY_YEAR + 5,
+                endYear: TODAY_YEAR + 45,
+                initialInvestment: 500000,
+                investmentReturn: 6,
+            },
+            expenses: [
+                { id: 1, name: 'Housing/Utilities', amount: 24000, growthRate: 3 },
+                { id: 2, name: 'Food/Groceries', amount: 12000, growthRate: 3 },
+            ],
+            incomes: [
+                { id: 1, name: 'CPP/OAS', amount: 20000, startYear: 2045, growthRate: 2.5 },
+            ],
+            oneTimeEvents: [
+                { id: 1, type: 'expense', name: 'Child\'s Wedding', amount: '50000', year: '2040' },
+            ],
+        });
+
+        // Tooltip Component
+        const Tooltip = ({ text }) => (
+            <div className="tooltip ml-1">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                </svg>
+                <span className="tooltiptext">{text}</span>
+            </div>
+        );
+
+        // --- Data Entry Component ---
+        const DataEntryTab = ({ items, setItems, fields, birthYear }) => {
+            const handleItemChange = (id, field, value) => {
+                setItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+            };
+
+            const handleAddItem = () => {
+                const newItem = { id: new Date().getTime() };
+                fields.forEach(field => newItem[field.key] = field.defaultValue);
                 setItems(prev => [...prev, newItem]);
             };
 
@@ -485,3 +936,4 @@
     </script>
 </body>
 </html>
+
