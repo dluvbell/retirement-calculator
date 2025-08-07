@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Retirement Calculator</title>
+    <title>고급 은퇴 플래너</title>
     
     <!-- External Libraries -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -15,783 +15,193 @@
     
     <!-- Styling -->
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #111827; color: #f9fafb; }
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: #374151; }
-        ::-webkit-scrollbar-thumb { background: #9CA3AF; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #D1D5DB; }
-        
-        /* Hide arrows from all number inputs */
+        body { font-family: 'Inter', sans-serif; background-color: #111827; color: #f9fafb; scroll-behavior: smooth; }
+        .scenario-tab-active { background-color: #3b82f6; color: white; }
+        .scenario-tab-inactive { background-color: #374151; color: #d1d5db; }
+        .data-tab-active { color: #34d399; border-color: #34d399; }
+        .data-tab-inactive { color: #d1d5db; border-color: transparent; }
+        .loader {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         input[type=number]::-webkit-inner-spin-button, 
-        input[type=number]::-webkit-outer-spin-button { 
-            -webkit-appearance: none; 
-            margin: 0; 
-        }
-        input[type=number] {
-            -moz-appearance: textfield;
-        }
-
-        .tooltip .tooltip-text {
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
+        .tooltip { position: relative; display: inline-flex; align-items: center; }
+        .tooltip .tooltiptext {
             visibility: hidden;
-            width: 250px;
+            width: 220px;
             background-color: #1f2937;
             color: #fff;
-            text-align: left;
+            text-align: center;
             border-radius: 6px;
-            padding: 8px;
+            padding: 5px;
             position: absolute;
             z-index: 10;
-            bottom: 125%;
-            left: -15px; /* Adjust position to prevent clipping */
+            bottom: 150%;
+            left: 50%;
+            margin-left: -110px;
             opacity: 0;
             transition: opacity 0.3s;
             border: 1px solid #374151;
         }
-        .tooltip:hover .tooltip-text, .tooltip:focus .tooltip-text {
-            visibility: visible;
-            opacity: 1;
-        }
-        #notification-container > div {
-            transition: all 0.3s ease-in-out;
-        }
+        .tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div id="notification-container" class="fixed top-5 right-5 z-50 w-80 space-y-2"></div>
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
         
-        // --- Utility Functions ---
+        // 객체 깊은 복사 유틸리티
         const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
         const TODAY_YEAR = new Date().getFullYear();
-
-        function showNotification(message, type = 'info') {
-            const container = document.getElementById('notification-container');
-            if (!container) return;
-
-            const notificationId = `notif_${new Date().getTime()}`;
-            const bgColor = type === 'error' ? 'bg-red-600' : 'bg-green-600';
-
-            const notification = document.createElement('div');
-            notification.id = notificationId;
-            notification.className = `p-4 rounded-lg text-white shadow-lg transform translate-x-full ${bgColor}`;
-            notification.innerText = message;
-
-            container.appendChild(notification);
-
-            setTimeout(() => {
-                notification.classList.remove('translate-x-full');
-            }, 10);
-
-            setTimeout(() => {
-                notification.classList.add('opacity-0');
-                setTimeout(() => {
-                    notification.remove();
-                }, 300);
-            }, 4000);
-        }
-
-        const fieldExplanations = {
-            initialInvestment: { description: "The total value of your investment assets at the start of the simulation.", example: "e.g., $500,000 in stocks, bonds, and real estate." },
-            investmentReturn: { description: "The average annual rate of return expected from your investments.", example: "e.g., 6% for a balanced portfolio." },
-            crashYear: { description: "The year a crash impacts your portfolio, applied at the year's end.", example: "e.g., To apply at the start of Year 6, set to Year 5. To apply at the end of Year 6, set to Year 6." },
-            crashDuration: { description: "The number of years the market downturn lasts. The total loss is spread out over this period.", example: "e.g., A 2-year duration with a 30% rate means a total 30% loss over 2 years." },
-            crashRate: { description: "The total percentage your assets will decrease by the end of the crash period.", example: "e.g., If Rate is 30% and Duration is 2 years, the total loss is 30% after 2 years." },
-            unexpectedExpenseYear: { description: "The year an unexpected expense occurs, applied at the start of the year.", example: "e.g., To apply at the start of Year 5, set to Year 5. To apply at the end of Year 5, set to Year 6." },
-            unexpectedExpenseAmount: { description: "The total amount of the unexpected expense.", example: "e.g., Medical surgery, car purchase, or paying off a mortgage." },
-            lumpSumIncomeYear: { description: "The year a lump-sum income is received, applied at the start of the year.", example: "e.g., To apply at the start of Year 5, set to Year 5. To apply at the end of Year 5, set to Year 6." },
-            lumpSumIncomeAmount: { description: "The total amount of the lump-sum income.", example: "e.g., Inheritance, lottery win, or selling a property." },
-            incomeName: { description: "A name for this income source for easy identification.", example: "e.g., CPP, OAS, Rental Income" },
-            incomeCurrentAmount: { description: "The annual amount of this income in today's dollars.", example: "e.g., $12,000" },
-            incomeStartAmount: { description: "The annual amount when the income begins. It is auto-calculated but can be manually overridden.", example: "e.g., $18,000" },
-            incomeStartYear: { description: "The absolute year this income begins.", example: "e.g., 2050" },
-            incomeGrowthRate: { description: "The individual annual growth rate for this specific income.", example: "e.g., 2.5% for a pension with cost-of-living adjustments. Use 0 for fixed income." },
-            expenseName: { description: "A name for this expense for easy identification.", example: "e.g., Housing, Groceries, Travel" },
-            expenseCurrentAmount: { description: "The expense amount in today's dollars, based on the selected frequency (monthly or annually).", example: "e.g., $2,000 for monthly rent." },
-            expenseStartAmount: { description: "The expense amount at the start of retirement, auto-calculated based on inflation. Can be manually overridden.", example: "e.g., $2,500" },
-            expenseFrequency: { description: "How often this expense occurs.", example: "e.g., Monthly for rent, Annually for property tax." },
-            expenseInflationRate: { description: "The individual annual inflation rate for this specific expense. This rate is always applied annually, regardless of the selected frequency.", example: "e.g., Housing might inflate at 4%, while healthcare inflates at 6%." },
-            doneButton: { description: "Annual Incomes & Expenses are applied at the start of each year. When you change values, 'Start Amount' auto-updates for a preview.", example: "Click 'Done' to apply your changes to the main simulation (graph, summary)." },
-        };
-
+        
+        // 새 시나리오 생성 함수
         const createNewScenario = (name) => ({
-            id: `scenario_${new Date().getTime()}`,
-            name: name || "New Scenario",
-            birthYear: 1980,
-            startYear: TODAY_YEAR + 5,
-            endYear: TODAY_YEAR + 45,
-            initialInvestment: 100000,
-            investmentReturn: 6,
-            annualExpenses: [],
-            annualIncomes: [],
-            crashes: [],
-            unexpectedExpenses: [],
-            lumpSumIncomes: [],
+            id: new Date().getTime(),
+            name: name,
+            settings: {
+                birthYear: 1980,
+                startYear: TODAY_YEAR + 5,
+                endYear: TODAY_YEAR + 45,
+                initialInvestment: 500000,
+                investmentReturn: 6,
+            },
+            expenses: [
+                { id: 1, name: '주거비/공과금', amount: 24000, growthRate: 3 },
+                { id: 2, name: '식료품비', amount: 12000, growthRate: 3 },
+            ],
+            incomes: [
+                { id: 1, name: 'CPP/OAS', amount: 20000, startYear: 2045, growthRate: 2.5 },
+            ],
+            oneTimeEvents: [
+                { id: 1, type: 'expense', name: '자녀 결혼', amount: '50000', year: '2040' },
+            ],
         });
 
-        const runSimulation = (inputs) => {
-            const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
-            let investment = getParsedValue(inputs.initialInvestment);
-            const yearlyData = [];
-            const startYear = getParsedValue(inputs.startYear);
-            const endYear = getParsedValue(inputs.endYear);
-            const birthYear = getParsedValue(inputs.birthYear);
-            let fundDepletionYear = endYear + 1;
+        // 툴팁 컴포넌트
+        const Tooltip = ({ text }) => (
+            <div className="tooltip ml-1">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                </svg>
+                <span className="tooltiptext">{text}</span>
+            </div>
+        );
 
-            if (!startYear || !endYear || !birthYear || startYear > endYear) {
-                return { yearlyData: [], fundDepletionYear: endYear + 1 };
-            }
+        // --- 데이터 입력 탭 컴포넌트 ---
+        const DataEntryTab = ({ items, setItems, fields, birthYear }) => {
+            const handleItemChange = (id, field, value) => {
+                setItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+            };
 
-            for (let currentYearVal = startYear; currentYearVal <= endYear; currentYearVal++) {
-                const age = currentYearVal - birthYear;
-                const relativeYear = currentYearVal - startYear + 1;
-                const startBalance = investment;
+            const handleAddItem = () => {
+                const newItem = { id: new Date().getTime() };
+                fields.forEach(field => newItem[field.key] = field.defaultValue);
+                setItems(prev => [...prev, newItem]);
+            };
 
-                // Lump-sum incomes are applied at the beginning of the year
-                let totalLumpSumIncome = 0;
-                const lumpSumForYear = (inputs.lumpSumIncomes || []).find(lsi => getParsedValue(lsi.year) === relativeYear);
-                if (lumpSumForYear) totalLumpSumIncome += getParsedValue(lumpSumForYear.amount);
-                investment += totalLumpSumIncome;
-                
-                // Annual expenses and incomes are applied at the beginning of the year
-                let totalExpense = 0;
-                (inputs.annualExpenses || []).forEach(expense => {
-                    let expenseAmount = getParsedValue(expense.startAmount);
-                    if (expense.frequency === 'Monthly') {
-                        expenseAmount *= 12;
-                    }
-                    const inflationFactor = Math.pow(1 + getParsedValue(expense.inflationRate) / 100, relativeYear - 1);
-                    totalExpense += expenseAmount * inflationFactor;
-                });
-
-                const unexpectedForYear = (inputs.unexpectedExpenses || []).find(ue => getParsedValue(ue.year) === relativeYear);
-                if (unexpectedForYear) totalExpense += getParsedValue(unexpectedForYear.amount);
-
-                let totalAnnualIncome = 0;
-                (inputs.annualIncomes || []).forEach(income => {
-                    const incomeStartYear = getParsedValue(income.startYear);
-                    if (currentYearVal >= incomeStartYear) {
-                        const yearsSinceStart = currentYearVal - incomeStartYear;
-                        const incomeValue = getParsedValue(income.startAmount) * Math.pow(1 + getParsedValue(income.growthRate) / 100, yearsSinceStart);
-                        totalAnnualIncome += incomeValue;
-                    }
-                });
-                
-                const netExpense = totalExpense - totalAnnualIncome;
-                investment -= netExpense;
-
-                // Investment returns (or losses) are calculated on the remaining balance
-                if (investment > 0) {
-                    const activeCrash = (inputs.crashes || []).find(c => relativeYear >= getParsedValue(c.year) && relativeYear < getParsedValue(c.year) + getParsedValue(c.duration));
-                    if (activeCrash && getParsedValue(activeCrash.duration) > 0) {
-                        const annualFactor = Math.pow(1 - getParsedValue(activeCrash.rate) / 100, 1 / getParsedValue(activeCrash.duration));
-                        investment *= annualFactor;
-                    } else {
-                        investment *= (1 + getParsedValue(inputs.investmentReturn) / 100);
-                    }
-                }
-                
-                if (investment <= 0 && fundDepletionYear > endYear) {
-                    fundDepletionYear = currentYearVal;
-                }
-                
-                yearlyData.push({ year: currentYearVal, age, startBalance: Math.round(startBalance), endBalance: Math.max(0, Math.round(investment)) });
-            }
-            return { yearlyData, fundDepletionYear };
-        };
-
-        // --- UI Components ---
-        const formatCurrency = (amount) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(amount);
-        
-        const InfoTooltip = ({ explanation, className = '' }) => {
-            if (!explanation) return null;
-            return (
-                <div className={`tooltip relative inline-flex items-center ${className}`} tabIndex="0">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-                    </svg>
-                    <div className="tooltip-text">
-                        <p className="font-semibold text-sm">{explanation.description}</p>
-                        <p className="text-xs text-gray-300 mt-1">{explanation.example}</p>
-                    </div>
-                </div>
-            );
-        };
-        
-        const SimulationPeriodInputs = ({ birthYear, startYear, endYear, onInputChange }) => {
-            const isValid = startYear && endYear && birthYear && startYear <= endYear;
-            const totalYears = isValid ? (endYear - startYear + 1) : 0;
-            const startAge = isValid ? startYear - birthYear : 0;
-            const endAge = isValid ? endYear - birthYear : 0;
-            return (
-                <div className="bg-gray-900/50 p-3 rounded-lg mb-4 border border-gray-700">
-                    <div className="grid grid-cols-3 gap-3 text-center">
-                        <div>
-                            <label className="text-xs text-gray-400">Birth Year</label>
-                            <input type="number" value={birthYear} onChange={(e) => onInputChange('birthYear', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                        </div>
-                        <div>
-                            <label className="text-xs text-gray-400">Start Year</label>
-                            <input type="number" value={startYear} onChange={(e) => onInputChange('startYear', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                        </div>
-                        <div>
-                            <label className="text-xs text-gray-400">End Year</label>
-                            <input type="number" value={endYear} onChange={(e) => onInputChange('endYear', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                        </div>
-                    </div>
-                    <div className="text-center text-xs text-gray-400 mt-2 h-4">
-                        {isValid ? `Simulating from age ${startAge} to ${endAge} (Total ${totalYears} years)` : 'Please set valid years'}
-                    </div>
-                </div>
-            );
-        };
-
-        const DynamicIncomeGroup = ({ incomes, onItemsChange, onAddItem, onRemoveItem, onCopyItem, birthYear }) => {
-            const [isCollapsed, setIsCollapsed] = useState(false);
-            
-            const IncomeRow = ({ income: initialIncome, index }) => {
-                const [income, setIncome] = useState(initialIncome);
-
-                useEffect(() => {
-                    setIncome(initialIncome);
-                }, [initialIncome]);
-
-                const handleLocalChange = (field, value) => {
-                    const newIncome = {...income, [field]: value};
-                    if(field === 'startAmount') {
-                        newIncome.isManual = true;
-                    } else if (['currentAmount', 'growthRate', 'startYear'].includes(field)) {
-                        newIncome.isManual = false; // Allow auto-calculation when dependencies change
-                    }
-                    setIncome(newIncome);
-                };
-
-                // Auto-calculate startAmount when dependencies change
-                useEffect(() => {
-                    if (income.isManual) return; // Don't auto-calculate if manually set
-
-                    const incomeStartYearAbsolute = parseInt(income.startYear, 10);
-                    const years = incomeStartYearAbsolute - TODAY_YEAR;
-                    const rate = parseFloat(income.growthRate) / 100;
-                    const presentValue = parseFloat(income.currentAmount);
-
-                    let newStartAmount;
-                    if (years > 0 && !isNaN(rate) && !isNaN(presentValue)) {
-                        newStartAmount = Math.round(presentValue * Math.pow(1 + rate, years));
-                    } else {
-                        newStartAmount = isNaN(presentValue) ? '' : presentValue;
-                    }
-
-                    if(String(income.startAmount) !== String(newStartAmount)) {
-                        setIncome(prev => ({ ...prev, startAmount: newStartAmount }));
-                    }
-
-                }, [income.currentAmount, income.growthRate, income.startYear, income.isManual]);
-
-
-                const handleReset = () => {
-                    setIncome(prev => ({...prev, isManual: false})); // Let the useEffect handle the calculation
-                };
-                
-                const handleDone = () => {
-                    onItemsChange(index, income);
-                    showNotification(`'${income.name}' updated!`);
-                };
-
-                const ageAtEvent = (birthYear && income.startYear && !isNaN(parseInt(income.startYear))) 
-                    ? parseInt(income.startYear) - parseInt(birthYear) 
-                    : null;
-
-                return (
-                     <div className="bg-gray-900/50 p-3 rounded-md">
-                        <div className="flex justify-between items-start mb-2 gap-2">
-                            <div className="flex-grow">
-                                <label className="text-xs text-gray-400 flex items-center"><InfoTooltip explanation={fieldExplanations.incomeName} className="mr-2" />Name</label>
-                                <input type="text" value={income.name} onChange={(e) => handleLocalChange('name', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                            </div>
-                            <div className="w-1/3">
-                                <label className="text-xs text-gray-400 flex items-center"><InfoTooltip explanation={fieldExplanations.incomeCurrentAmount} className="mr-2" />Current Amt.</label>
-                                <input type="number" value={income.currentAmount} onChange={(e) => handleLocalChange('currentAmount', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                            </div>
-                            <div className="pt-5 flex space-x-1">
-                                <button onClick={() => onCopyItem(index)} className="p-2 text-gray-300 hover:text-white hover:bg-blue-600 rounded-full" title="Copy Income">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" /></svg>
-                                </button>
-                                <button onClick={() => onRemoveItem(index)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
-                                </button>
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-10 gap-2">
-                            <div className="col-span-3">
-                                <label className="text-xs text-gray-400 flex items-center"><InfoTooltip explanation={fieldExplanations.incomeStartYear} className="mr-2" />Start Year</label>
-                                <input type="number" value={income.startYear} onChange={(e) => handleLocalChange('startYear', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                                {ageAtEvent !== null && <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">(Age: {ageAtEvent})</div>}
-                            </div>
-                            <div className="col-span-3">
-                                <label className="text-xs text-gray-400 flex items-center"><InfoTooltip explanation={fieldExplanations.incomeGrowthRate} className="mr-2" />Growth %</label>
-                                <input type="number" value={income.growthRate} onChange={(e) => handleLocalChange('growthRate', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                            </div>
-                            <div className="col-span-4">
-                                <label className="text-xs text-gray-400 flex items-center"><InfoTooltip explanation={fieldExplanations.incomeStartAmount} className="mr-2" />Start Amt.</label>
-                                 <div className="flex items-center">
-                                    <input type="number" value={income.startAmount} onChange={(e) => handleLocalChange('startAmount', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                                    <button onClick={handleReset} className="p-2 text-gray-400 hover:text-white" title="Reset to auto-calculation">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 110 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" /></svg>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                         <div className="mt-2">
-                            <button onClick={handleDone} className="w-full py-2 px-4 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-md">Done</button>
-                        </div>
-                    </div>
-                );
+            const handleRemoveItem = (id) => {
+                setItems(prev => prev.filter(item => item.id !== id));
             };
 
             return (
-                <div className="mt-4">
-                    <div onClick={() => setIsCollapsed(!isCollapsed)} className="flex items-center border-b border-gray-700 pb-2 mb-3 cursor-pointer">
-                        <h3 className="text-lg font-semibold text-gray-300">Annual Incomes</h3>
-                        <InfoTooltip explanation={fieldExplanations.doneButton} className="ml-2" />
-                        <svg className={`w-5 h-5 ml-auto text-gray-400 transform transition-transform ${isCollapsed ? 'rotate-0' : 'rotate-180'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                    </div>
-                    <div className={`transition-all duration-300 ease-in-out overflow-hidden ${isCollapsed ? 'max-h-0' : 'max-h-[1000px]'}`}>
-                        <div className="space-y-3 pt-2">
-                            {(incomes || []).map((income, index) => <IncomeRow key={income.id} income={income} index={index} birthYear={birthYear} />)}
-                            {(incomes || []).length < 10 && (
-                                <button onClick={onAddItem} className="w-full mt-2 py-2 px-4 bg-teal-600 hover:bg-teal-700 text-white font-semibold rounded-md flex items-center justify-center">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
-                                    Add Annual Income
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            );
-        };
+                <div className="space-y-4">
+                    {(items || []).map(item => {
+                        const yearFieldKey = item.hasOwnProperty('startYear') ? 'startYear' : 'year';
+                        const itemYear = item[yearFieldKey];
+                        const ageAtEvent = (birthYear && itemYear && String(itemYear).length === 4) ?
+                            parseInt(itemYear, 10) - parseInt(birthYear, 10) : null;
+                        
+                        const fieldGroups = fields.reduce((acc, field) => {
+                            acc[field.row] = acc[field.row] || [];
+                            acc[field.row].push(field);
+                            return acc;
+                        }, {});
 
-        const DynamicExpenseGroup = ({ expenses, onItemsChange, onAddItem, onRemoveItem, onCopyItem, startYear }) => {
-            const [isCollapsed, setIsCollapsed] = useState(false);
-
-            const ExpenseRow = ({ expense: initialExpense, index }) => {
-                const [expense, setExpense] = useState(initialExpense);
-
-                useEffect(() => {
-                    setExpense(initialExpense);
-                }, [initialExpense]);
-
-                const handleLocalChange = (field, value) => {
-                    const newExpense = {...expense, [field]: value};
-                    if(field === 'startAmount') {
-                        newExpense.isManual = true;
-                    } else if (['currentAmount', 'inflationRate'].includes(field)) {
-                        newExpense.isManual = false; // Allow auto-calculation
-                    }
-                    setExpense(newExpense);
-                };
-
-                // Auto-calculate startAmount when dependencies change
-                useEffect(() => {
-                    if (expense.isManual) return; // Exit if manually set
-
-                    const years = parseInt(startYear) - TODAY_YEAR;
-                    const rate = parseFloat(expense.inflationRate) / 100;
-                    const presentValue = parseFloat(expense.currentAmount);
-
-                    let newStartAmount;
-                    if (years > 0 && !isNaN(rate) && !isNaN(presentValue)) {
-                        newStartAmount = Math.round(presentValue * Math.pow(1 + rate, years));
-                    } else {
-                        newStartAmount = isNaN(presentValue) ? '' : presentValue;
-                    }
-                    
-                    if (String(expense.startAmount) !== String(newStartAmount)) {
-                         setExpense(prev => ({ ...prev, startAmount: newStartAmount }));
-                    }
-
-                }, [expense.currentAmount, expense.inflationRate, startYear, expense.isManual]);
-
-                const handleReset = () => {
-                    setExpense(prev => ({...prev, isManual: false})); // Let the useEffect handle the calculation
-                };
-                
-                const handleDone = () => {
-                    onItemsChange(index, expense);
-                    showNotification(`'${expense.name}' updated!`);
-                };
-
-                return (
-                     <div className="bg-gray-900/50 p-3 rounded-md">
-                        <div className="flex justify-between items-start mb-2 gap-2">
-                            <div className="flex-grow">
-                                <label className="text-xs text-gray-400 flex items-center"><InfoTooltip explanation={fieldExplanations.expenseName} className="mr-2" />Name</label>
-                                <input type="text" value={expense.name} onChange={(e) => handleLocalChange('name', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                            </div>
-                            <div className="w-1/3">
-                                <label className="text-xs text-gray-400 flex items-center"><InfoTooltip explanation={fieldExplanations.expenseCurrentAmount} className="mr-2" />Current Amt.</label>
-                                <input type="number" value={expense.currentAmount} onChange={(e) => handleLocalChange('currentAmount', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                            </div>
-                            <div className="pt-5 flex space-x-1">
-                                <button onClick={() => onCopyItem(index)} className="p-2 text-gray-300 hover:text-white hover:bg-blue-600 rounded-full" title="Copy Expense">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" /></svg>
-                                </button>
-                                <button onClick={() => onRemoveItem(index)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
-                                </button>
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-10 gap-2">
-                            <div className="col-span-3">
-                                <label className="text-xs text-gray-400 flex items-center"><InfoTooltip explanation={fieldExplanations.expenseFrequency} className="mr-2" />Frequency</label>
-                                <select value={expense.frequency} onChange={(e) => handleLocalChange('frequency', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
-                                    <option>Monthly</option>
-                                    <option>Annually</option>
-                                </select>
-                            </div>
-                            <div className="col-span-3">
-                                <label className="text-xs text-gray-400 flex items-center"><InfoTooltip explanation={fieldExplanations.expenseInflationRate} className="mr-2" />Inflation %</label>
-                                <input type="number" value={expense.inflationRate} onChange={(e) => handleLocalChange('inflationRate', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                            </div>
-                            <div className="col-span-4">
-                                <label className="text-xs text-gray-400 flex items-center"><InfoTooltip explanation={fieldExplanations.expenseStartAmount} className="mr-2" />Start Amt.</label>
-                                 <div className="flex items-center">
-                                    <input type="number" value={expense.startAmount} onChange={(e) => handleLocalChange('startAmount', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                                    <button onClick={handleReset} className="p-2 text-gray-400 hover:text-white" title="Reset to auto-calculation">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 110 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" /></svg>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                         <div className="mt-2">
-                            <button onClick={handleDone} className="w-full py-2 px-4 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-md">Done</button>
-                        </div>
-                    </div>
-                );
-            };
-
-            return (
-                <div className="mt-4">
-                    <div onClick={() => setIsCollapsed(!isCollapsed)} className="flex items-center border-b border-gray-700 pb-2 mb-3 cursor-pointer">
-                        <h3 className="text-lg font-semibold text-gray-300">Annual Expenses</h3>
-                        <InfoTooltip explanation={fieldExplanations.doneButton} className="ml-2" />
-                        <svg className={`w-5 h-5 ml-auto text-gray-400 transform transition-transform ${isCollapsed ? 'rotate-0' : 'rotate-180'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                    </div>
-                    <div className={`transition-all duration-300 ease-in-out overflow-hidden ${isCollapsed ? 'max-h-0' : 'max-h-[1000px]'}`}>
-                        <div className="space-y-3 pt-2">
-                            {(expenses || []).map((expense, index) => <ExpenseRow key={expense.id} expense={expense} index={index} />)}
-                            {(expenses || []).length < 10 && (
-                                <button onClick={onAddItem} className="w-full mt-2 py-2 px-4 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-md flex items-center justify-center">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
-                                    Add Annual Expense
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
-        const DynamicEventGroup = ({ title, items, onItemsChange, onAddItem, onRemoveItem, itemFields, addButtonText, addButtonColor, birthYear, startYear }) => {
-            const [isCollapsed, setIsCollapsed] = useState(false);
-            return (
-                <div className="mt-6">
-                    <div onClick={() => setIsCollapsed(!isCollapsed)} className="flex items-center border-b border-gray-700 pb-2 mb-3 cursor-pointer">
-                        <h3 className="text-lg font-semibold text-gray-300">{title}</h3>
-                        <svg className={`w-5 h-5 ml-auto text-gray-400 transform transition-transform ${isCollapsed ? 'rotate-0' : 'rotate-180'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                    </div>
-                    <div className={`transition-all duration-300 ease-in-out overflow-hidden ${isCollapsed ? 'max-h-0' : 'max-h-[1000px]'}`}>
-                        <div className="space-y-3 pt-2">
-                            {(items || []).map((item, index) => {
-                                const actualYear = (startYear && item.year && !isNaN(parseInt(item.year)))
-                                    ? (parseInt(startYear) + parseInt(item.year) - 1)
-                                    : null;
-                                const ageAtEvent = (birthYear && actualYear)
-                                    ? actualYear - parseInt(birthYear)
-                                    : null;
-
-                                return (
-                                    <div key={item.id} className="grid grid-cols-10 gap-2 items-start">
-                                        {itemFields.map(field => (
-                                            <div key={field.key} className={`col-span-${field.span}`}>
-                                                <label className="text-xs text-gray-400 flex items-center">
-                                                    <InfoTooltip explanation={fieldExplanations[field.explanationKey]} className="mr-2" />
-                                                    {field.label}
-                                                </label>
-                                                <input type="number" step="any" value={item[field.key]} onChange={(e) => onItemsChange(index, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                                                {field.key === 'year' && actualYear !== null && (
-                                                    <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">
-                                                        (Year: {actualYear}, Age: {ageAtEvent})
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
-                                        <div className="col-span-1 self-center pt-5">
-                                            <button onClick={() => onRemoveItem(index)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
-                                            </button>
+                        return (
+                            <div key={item.id} className="p-4 bg-gray-900/50 rounded-lg border border-gray-700">
+                                <div className="flex flex-col space-y-2">
+                                    {Object.values(fieldGroups).map((rowFields, rowIndex) => (
+                                        <div key={rowIndex} className="grid grid-cols-12 gap-x-4 items-start">
+                                            {rowFields.map(field => (
+                                                <div key={field.key} className={`col-span-12 ${field.className}`}>
+                                                    <label className="text-xs text-gray-400 flex items-center">
+                                                        {field.label}
+                                                        {field.tooltip && <Tooltip text={field.tooltip} />}
+                                                    </label>
+                                                    {field.type === 'select' ? (
+                                                        <select value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
+                                                            {field.options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                                        </select>
+                                                    ) : (
+                                                        <input type={field.type || 'text'} value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md" placeholder={field.placeholder || ''} step={field.step || 'any'} />
+                                                    )}
+                                                    { (field.key === 'startYear' || field.key === 'year') && ageAtEvent !== null && ageAtEvent >= 0 && (
+                                                        <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">(만 {ageAtEvent}세)</div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                            {rowFields.some(f => f.hasDelete) && (
+                                                 <div className="col-span-1 self-center">
+                                                    <button onClick={() => handleRemoveItem(item.id)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
-                                    </div>
-                                );
-                            })}
-                            {(items || []).length < 10 && (
-                                <button onClick={onAddItem} className={`w-full mt-2 py-2 px-4 ${addButtonColor} text-white font-semibold rounded-md flex items-center justify-center`}>
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
-                                    {addButtonText}
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-        
-        const ScenarioPanel = ({ scenario, setScenario, titleColor }) => {
-            const handleInputChange = (key, value) => {
-                const numValue = parseFloat(value);
-                 if (value === '' || value === '-' || isNaN(numValue)) {
-                    setScenario(prev => ({ ...prev, [key]: value }));
-                } else {
-                    setScenario(prev => ({ ...prev, [key]: numValue }));
-                }
-            };
-            
-            const handleDynamicEventChange = (type, index, key, value) => {
-                const updatedScenario = deepCopy(scenario);
-                updatedScenario[type][index][key] = value;
-                setScenario(updatedScenario);
-            };
-            
-            const handleAnnualIncomeUpdate = (index, updatedIncome) => {
-                const updatedScenario = deepCopy(scenario);
-                updatedScenario.annualIncomes[index] = updatedIncome;
-                setScenario(updatedScenario);
-            };
-            
-            const handleAnnualExpenseUpdate = (index, updatedExpense) => {
-                const updatedScenario = deepCopy(scenario);
-                updatedScenario.annualExpenses[index] = updatedExpense;
-                setScenario(updatedScenario);
-            };
-
-            const handleAddDynamicEvent = (type) => {
-                const updatedScenario = deepCopy(scenario);
-                if (!updatedScenario[type]) updatedScenario[type] = [];
-
-                let newItem;
-                if (type === 'annualIncomes') {
-                    newItem = { id: `income_${new Date().getTime()}`, name: 'New Income', currentAmount: 10000, startAmount: '', startYear: scenario.startYear, growthRate: 2, isManual: false };
-                } else if (type === 'annualExpenses') {
-                    newItem = { id: `expense_${new Date().getTime()}`, name: 'New Expense', frequency: 'Monthly', currentAmount: 1000, startAmount: '', inflationRate: 3, isManual: false };
-                } else if (type === 'crashes') { 
-                    newItem = { id: `crash_${new Date().getTime()}`, year: 1, duration: 1, rate: 10 };
-                } else { // unexpected expenses or lump sums
-                    newItem = { id: `${type}_${new Date().getTime()}`, year: 1, amount: 10000 };
-                }
-                
-                updatedScenario[type].push(newItem);
-                setScenario(updatedScenario);
-            };
-
-            const handleCopyItem = (type, index) => {
-                const updatedScenario = deepCopy(scenario);
-                const itemToCopy = updatedScenario[type][index];
-                const newItem = {
-                    ...itemToCopy,
-                    id: `${type.slice(0, -1)}_${new Date().getTime()}`,
-                    name: `${itemToCopy.name} (Copy)`
-                };
-                updatedScenario[type].splice(index + 1, 0, newItem);
-                setScenario(updatedScenario);
-            };
-
-            const handleRemoveDynamicEvent = (type, index) => {
-                const updatedScenario = deepCopy(scenario);
-                updatedScenario[type].splice(index, 1);
-                setScenario(updatedScenario);
-            };
-
-            return (
-                <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                    <div className="grid grid-cols-2 items-center mb-4">
-                        <h2 className={`text-xl md:text-2xl font-bold ${titleColor}`}>Scenario Editor</h2>
-                        <input type="text" value={scenario.name} onChange={(e) => handleInputChange('name', e.target.value)} className="w-full p-2 text-right bg-gray-700 border border-gray-600 text-white rounded-md"/>
-                    </div>
-                    
-                    <SimulationPeriodInputs 
-                        birthYear={scenario.birthYear} startYear={scenario.startYear} endYear={scenario.endYear}
-                        onInputChange={handleInputChange}
-                    />
-
-                    <div className="grid grid-cols-3 items-center gap-x-4 mb-3">
-                         <label className="text-sm font-medium text-gray-300 flex items-center col-span-1">
-                            <InfoTooltip explanation={fieldExplanations.initialInvestment} className="mr-2" />
-                            Initial Investment
-                        </label>
-                        <div className="col-span-2">
-                           <input type="number" value={scenario.initialInvestment} onChange={(e) => handleInputChange('initialInvestment', e.target.value)} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                        </div>
-                    </div>
-
-                    <DynamicExpenseGroup
-                        expenses={scenario.annualExpenses}
-                        onItemsChange={handleAnnualExpenseUpdate}
-                        onAddItem={() => handleAddDynamicEvent('annualExpenses')}
-                        onRemoveItem={(index) => handleRemoveDynamicEvent('annualExpenses', index)}
-                        onCopyItem={(index) => handleCopyItem('annualExpenses', index)}
-                        startYear={scenario.startYear}
-                    />
-                    
-                    <DynamicIncomeGroup
-                        incomes={scenario.annualIncomes}
-                        onItemsChange={handleAnnualIncomeUpdate}
-                        onAddItem={() => handleAddDynamicEvent('annualIncomes')}
-                        onRemoveItem={(index) => handleRemoveDynamicEvent('annualIncomes', index)}
-                        onCopyItem={(index) => handleCopyItem('annualIncomes', index)}
-                        birthYear={scenario.birthYear}
-                    />
-
-                    <DynamicEventGroup 
-                        title="Market Crash Scenarios" 
-                        items={scenario.crashes} 
-                        onItemsChange={(index, key, value) => handleDynamicEventChange('crashes', index, key, value)} 
-                        onAddItem={() => handleAddDynamicEvent('crashes')} 
-                        onRemoveItem={(index) => handleRemoveDynamicEvent('crashes', index)}
-                        itemFields={[
-                            {key: 'year', label: 'Year (from start)', span: 3, explanationKey: 'crashYear'}, 
-                            {key: 'duration', label: 'Duration (Yrs)', span: 3, explanationKey: 'crashDuration'}, 
-                            {key: 'rate', label: 'Total Rate (%)', span: 3, explanationKey: 'crashRate'}
-                        ]}
-                        addButtonText="Add Crash" 
-                        addButtonColor="bg-indigo-600 hover:bg-indigo-700"
-                        birthYear={scenario.birthYear}
-                        startYear={scenario.startYear}
-                    />
-                    <DynamicEventGroup 
-                        title="Unexpected Expenses" 
-                        items={scenario.unexpectedExpenses} 
-                        onItemsChange={(index, key, value) => handleDynamicEventChange('unexpectedExpenses', index, key, value)} 
-                        onAddItem={() => handleAddDynamicEvent('unexpectedExpenses')} 
-                        onRemoveItem={(index) => handleRemoveDynamicEvent('unexpectedExpenses', index)}
-                        itemFields={[
-                            {key: 'year', label: 'Year (from start)', span: 4, explanationKey: 'unexpectedExpenseYear'}, 
-                            {key: 'amount', label: 'Amount', span: 5, explanationKey: 'unexpectedExpenseAmount'}
-                        ]}
-                        addButtonText="Add Unexpected Expense" 
-                        addButtonColor="bg-red-600 hover:bg-red-700"
-                        birthYear={scenario.birthYear}
-                        startYear={scenario.startYear}
-                    />
-                    <DynamicEventGroup 
-                        title="Lump-Sum Incomes" 
-                        items={scenario.lumpSumIncomes} 
-                        onItemsChange={(index, key, value) => handleDynamicEventChange('lumpSumIncomes', index, key, value)} 
-                        onAddItem={() => handleAddDynamicEvent('lumpSumIncomes')} 
-                        onRemoveItem={(index) => handleRemoveDynamicEvent('lumpSumIncomes', index)}
-                        itemFields={[
-                            {key: 'year', label: 'Year (from start)', span: 4, explanationKey: 'lumpSumIncomeYear'}, 
-                            {key: 'amount', label: 'Amount', span: 5, explanationKey: 'lumpSumIncomeAmount'}
-                        ]}
-                        addButtonText="Add Lump-Sum Income" 
-                        addButtonColor="bg-green-600 hover:bg-green-700"
-                        birthYear={scenario.birthYear}
-                        startYear={scenario.startYear}
-                    />
-                </div>
-            );
-        };
-        
-        const WhatIfAnalysis = ({ activeTab, savedScenarios, currentScenario, onQuickChange, colors }) => {
-            const [selectedId, setSelectedId] = useState(currentScenario.id);
-
-            useEffect(() => {
-                if (activeTab === 'current') {
-                    setSelectedId(currentScenario.id);
-                }
-            }, [activeTab, currentScenario]);
-
-            const scenarioToDisplay = savedScenarios.find(s => s.id === selectedId) || currentScenario;
-            const scenarioIndex = savedScenarios.findIndex(s => s.id === selectedId);
-            const color = colors[scenarioIndex] || 'text-gray-400';
-
-            const fieldsToControl = [
-                { key: 'investmentReturn', label: 'Return (%)' },
-            ];
-            
-            return (
-                <div className="bg-gray-900/50 p-4 rounded-lg mt-4 border border-gray-700">
-                    {activeTab === 'comparison' && (
-                        <div className="flex justify-center space-x-2 mb-4">
-                            {savedScenarios.map((s, index) => (
-                                <button
-                                    key={s.id}
-                                    onClick={() => setSelectedId(s.id)}
-                                    className={`py-2 px-4 rounded-md text-sm font-semibold border-2 ${selectedId === s.id ? 'text-white' : 'text-gray-400 border-transparent'}`}
-                                    style={{ borderColor: selectedId === s.id ? colors[index] : 'transparent' }}
-                                >
-                                    {s.name}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-                    <h3 className="text-lg font-semibold text-gray-300 mb-4 text-center">
-                        "What-If" Quick Adjustments for <span style={{ color }}>{scenarioToDisplay.name}</span>
-                    </h3>
-                    <div className="flex justify-around items-start text-center gap-2 md:gap-4">
-                        {fieldsToControl.map(field => (
-                            <div key={field.key} className="flex-1 min-w-0">
-                                <label className="text-xs md:text-sm font-medium text-gray-300 flex items-center justify-center mb-1 truncate" title={field.label}>
-                                    <InfoTooltip explanation={fieldExplanations[field.key]} className="mr-2" />
-                                    <span className="truncate">{field.label}</span>
-                                </label>
-                                <input 
-                                    type="number" 
-                                    step="0.1" 
-                                    value={scenarioToDisplay[field.key]} 
-                                    onChange={(e) => onQuickChange(selectedId, field.key, e.target.value)}
-                                    className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md text-center"
-                                />
+                                    ))}
+                                </div>
                             </div>
-                        ))}
-                    </div>
+                        );
+                    })}
+                    <button onClick={handleAddItem} className="w-full mt-4 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
+                        항목 추가
+                    </button>
                 </div>
             );
         };
 
-        const ComparisonChart = ({ scenarios, simulationResults, colors }) => {
+        // --- 비교 결과 컴포넌트 ---
+        const ComparisonResults = ({ scenarios, simulationResults }) => {
             const chartRef = useRef(null);
             const chartInstanceRef = useRef(null);
+            const colors = ['#34D399', '#F472B6', '#FBBF24'];
+            const formatCurrency = (amount) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(amount);
 
             useEffect(() => {
-                if (!chartRef.current || simulationResults.length === 0) return;
+                if (!simulationResults || simulationResults.length === 0 || !chartRef.current) return;
+                
                 if (chartInstanceRef.current) chartInstanceRef.current.destroy();
 
-                const allValidResults = simulationResults.filter(r => r && r.yearlyData.length > 0);
-                if (allValidResults.length === 0) return;
+                const allYears = simulationResults.flatMap(r => r.yearlyData.map(d => d.year));
+                if (allYears.length === 0) return;
 
-                const minYear = Math.min(...allValidResults.map(r => r.yearlyData[0].year));
-                const maxYear = Math.max(...allValidResults.map(r => r.yearlyData[r.yearlyData.length - 1].year));
-                
-                const labels = [];
-                for (let y = minYear; y <= maxYear; y++) {
-                    labels.push(y);
-                }
-                
-                const datasets = scenarios.map((scenario, index) => {
-                    const resultData = simulationResults[index] ? simulationResults[index].yearlyData : [];
-                    const dataMap = new Map(resultData.map(d => [d.year, d.endBalance]));
-                    const chartData = labels.map(year => dataMap.get(year) ?? null);
+                const minYear = Math.min(...allYears);
+                const maxYear = Math.max(...allYears);
+                const labels = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
+
+                const datasets = simulationResults.map((result, index) => {
+                    const scenario = scenarios[index];
+                    const dataMap = new Map(result.yearlyData.map(d => [d.year, d.endBalance]));
+                    const chartData = labels.map(year => dataMap.has(year) ? dataMap.get(year) : null);
 
                     return {
                         label: scenario.name,
                         data: chartData,
                         borderColor: colors[index % colors.length],
-                        backgroundColor: colors[index % colors.length].replace('rgb', 'rgba').replace(')', ', 0.2)'),
+                        backgroundColor: colors[index % colors.length] + '33',
                         fill: true,
                         tension: 0.3,
                         spanGaps: true,
@@ -804,367 +214,274 @@
                     data: { labels, datasets },
                     options: {
                         responsive: true, maintainAspectRatio: false,
-                        plugins: { 
-                            legend: { labels: { color: '#D1D5DB' } }, 
-                            tooltip: { 
-                                mode: 'index', 
-                                intersect: false, 
-                                callbacks: { 
-                                    title: (items) => {
-                                        const year = parseInt(items[0].label, 10);
-                                        return `Year: ${year}`;
-                                    },
-                                    label: (ctx) => {
-                                        const year = parseInt(ctx.label, 10);
-                                        const scenario = scenarios[ctx.datasetIndex];
-                                        const balance = formatCurrency(ctx.parsed.y);
-                                        if (scenario && scenario.birthYear) {
-                                            const age = year - parseInt(scenario.birthYear);
-                                            return `${ctx.dataset.label}: ${balance} (Age: ${age})`;
-                                        }
-                                        return `${ctx.dataset.label}: ${balance}`;
-                                    }
-                                } 
-                            } 
-                        },
+                        plugins: { legend: { labels: { color: '#D1D5DB' } } },
                         scales: { 
-                            y: { 
-                                ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000) + 'k' }, 
-                                grid: { color: 'rgba(255, 255, 255, 0.1)' } 
-                            }, 
-                            x: { 
-                                title: { display: true, text: 'Year', color: '#9CA3AF' }, 
-                                grid: { color: 'rgba(255, 255, 255, 0.1)' },
-                                ticks: { 
-                                    color: '#9CA3AF',
-                                    autoSkip: false,
-                                    callback: function(value, index, ticks) {
-                                        const year = this.getLabelForValue(value);
-                                        
-                                        const firstScenario = scenarios[0];
-                                        if (!firstScenario || !firstScenario.birthYear) {
-                                            return null;
-                                        }
-
-                                        const birthYear = parseInt(firstScenario.birthYear, 10);
-                                        const age = year - birthYear;
-
-                                        if (age >= 0 && age % 5 === 0) {
-                                            return year.toString();
-                                        }
-                                        
-                                        return null;
-                                    }
-                                }
-                            } 
+                            y: { ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000) + 'k' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }, 
+                            x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } 
                         }
                     }
                 });
-                return () => { if (chartInstanceRef.current) chartInstanceRef.current.destroy(); };
-            }, [scenarios, simulationResults, colors]);
 
-            return <div className="relative h-80"><canvas ref={chartRef}></canvas></div>;
-        };
-        
-        // --- Main App Component ---
-        const RetirementCalculator = () => {
-            const [savedScenarios, setSavedScenarios] = useState(() => {
-                const saved = localStorage.getItem('savedScenarios');
-                if (saved) {
-                    const parsed = JSON.parse(saved);
-                    return parsed.length > 0 ? parsed : [createNewScenario('Default Scenario')];
-                }
-                return [createNewScenario('Default Scenario')];
-            });
-            const [currentScenario, setCurrentScenario] = useState(() => deepCopy(savedScenarios[0]));
+            }, [simulationResults, scenarios]);
+
+            if (!simulationResults || simulationResults.length === 0) return null;
             
+            return (
+                <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 mt-6">
+                    <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">비교 결과</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mb-6">
+                        {simulationResults.map((result, index) => {
+                            const scenario = scenarios[index];
+                            const age = result.fundDepletionYear > scenario.settings.endYear ? null : result.fundDepletionYear - scenario.settings.birthYear;
+                            const depletionText = age ? `${result.fundDepletionYear}년 (만 ${age}세)` : '자금 유지';
+                            return (
+                                <div key={scenario.id} className="p-3 rounded-lg" style={{backgroundColor: colors[index % colors.length] + '22'}}>
+                                    <div className="text-sm font-semibold" style={{color: colors[index % colors.length]}}>{scenario.name}</div>
+                                    <div className="text-lg font-bold text-gray-200">{depletionText}</div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="relative h-96"><canvas ref={chartRef}></canvas></div>
+                </div>
+            );
+        };
+
+        // --- 메인 앱 컴포넌트 ---
+        const App = () => {
+            const [scenarios, setScenarios] = useState(() => {
+                const saved = localStorage.getItem('retirementScenarios');
+                return saved ? JSON.parse(saved) : [createNewScenario('시나리오 1')];
+            });
+            const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
+            const [activeDataTab, setActiveDataTab] = useState('settings');
             const [simulationResults, setSimulationResults] = useState([]);
-            const [activeTab, setActiveTab] = useState('current');
-            const colors = ['rgb(250, 204, 21)', 'rgb(244, 114, 182)', 'rgb(52, 211, 153)'];
+            const [isCalculating, setIsCalculating] = useState(false);
+            const resultsRef = useRef(null);
 
             useEffect(() => {
-                const handler = setTimeout(() => {
-                    const yearFields = ['startYear', 'endYear', 'birthYear'];
-                    for (const field of yearFields) {
-                        if (currentScenario[field] && String(currentScenario[field]).length > 0 && String(currentScenario[field]).length < 4) {
-                            return;
-                        }
-                    }
+                localStorage.setItem('retirementScenarios', JSON.stringify(scenarios));
+            }, [scenarios]);
 
-                    const index = savedScenarios.findIndex(s => s.id === currentScenario.id);
-                    if (index !== -1) {
-                        const newSavedScenarios = [...savedScenarios];
-                        if (JSON.stringify(newSavedScenarios[index]) !== JSON.stringify(currentScenario)) {
-                            newSavedScenarios[index] = deepCopy(currentScenario);
-                            setSavedScenarios(newSavedScenarios);
-                        }
-                    }
-                }, 500);
-
-                return () => {
-                    clearTimeout(handler);
-                };
-            }, [currentScenario]);
-
-            useEffect(() => {
-                const results = savedScenarios.map(s => runSimulation(s));
-                setSimulationResults(results);
-                localStorage.setItem('savedScenarios', JSON.stringify(savedScenarios));
-            }, [savedScenarios]);
-
-            const handleSaveAsNew = () => {
-                if (savedScenarios.length >= 3) {
-                    showNotification("You can save a maximum of 3 scenarios.", "error");
-                    return;
+            const activeScenario = scenarios.find(s => s.id === activeScenarioId) || scenarios[0];
+            
+            const updateActiveScenario = (updater) => {
+                setScenarios(prev => prev.map(s => s.id === activeScenarioId ? updater(s) : s));
+            };
+            
+            const handleAddScenario = () => {
+                if (scenarios.length < 3) {
+                    const newScenario = createNewScenario(`시나리오 ${scenarios.length + 1}`);
+                    setScenarios(prev => [...prev, newScenario]);
+                    setActiveScenarioId(newScenario.id);
                 }
-                const newScenario = createNewScenario(`Scenario ${savedScenarios.length + 1}`);
-                setSavedScenarios(prev => [...prev, newScenario]);
-                setCurrentScenario(newScenario);
             };
 
             const handleCopyScenario = (id) => {
-                if (savedScenarios.length >= 3) {
-                    showNotification("You can save a maximum of 3 scenarios.", "error");
-                    return;
-                }
-                const scenarioToCopy = savedScenarios.find(s => s.id === id);
-                if (scenarioToCopy) {
+                if (scenarios.length < 3) {
+                    const scenarioToCopy = scenarios.find(s => s.id === id);
                     const newScenario = deepCopy(scenarioToCopy);
-                    newScenario.id = `scenario_${new Date().getTime()}`;
-                    newScenario.name = `${scenarioToCopy.name} (Copy)`;
-                    setSavedScenarios(prev => [...prev, newScenario]);
-                    setCurrentScenario(newScenario);
+                    newScenario.id = new Date().getTime();
+                    newScenario.name = `${scenarioToCopy.name} (복사)`;
+                    setScenarios(prev => [...prev, newScenario]);
+                    setActiveScenarioId(newScenario.id);
                 }
-            };
-
-            const handleLoadScenario = (id) => {
-                const scenarioToLoad = savedScenarios.find(s => s.id === id);
-                setCurrentScenario(deepCopy(scenarioToLoad));
             };
 
             const handleRemoveScenario = (id) => {
-                if (savedScenarios.length <= 1) {
-                    showNotification("You must have at least one scenario.", "error");
-                    return;
-                }
-                const newSaved = savedScenarios.filter(s => s.id !== id);
-                setSavedScenarios(newSaved);
-                if(currentScenario.id === id) {
-                    setCurrentScenario(deepCopy(newSaved[0]));
+                if (scenarios.length > 1) {
+                    const newScenarios = scenarios.filter(s => s.id !== id);
+                    setScenarios(newScenarios);
+                    if (activeScenarioId === id) {
+                        setActiveScenarioId(newScenarios[0].id);
+                    }
                 }
             };
-            
-            const handleQuickChange = (scenarioId, field, value) => {
-                const newSavedScenarios = savedScenarios.map(s => {
-                    if (s.id === scenarioId) {
-                        const updatedScenario = deepCopy(s);
-                        const numValue = parseFloat(value);
-                        if (value === '' || value === '-' || isNaN(numValue)) {
-                           updatedScenario[field] = value;
-                        } else {
-                           updatedScenario[field] = numValue;
+
+            const runAllSimulations = () => {
+                setIsCalculating(true);
+                setSimulationResults([]);
+
+                setTimeout(() => {
+                    const results = scenarios.map(scenario => {
+                        const { settings, expenses, incomes, oneTimeEvents } = scenario;
+                        const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
+                        let investment = getParsedValue(settings.initialInvestment);
+                        const yearlyData = [];
+                        const startYear = getParsedValue(settings.startYear);
+                        const endYear = getParsedValue(settings.endYear);
+                        const birthYear = getParsedValue(settings.birthYear);
+                        let fundDepletionYear = endYear + 1;
+
+                        if (!startYear || !endYear || !birthYear || startYear > endYear) return null;
+
+                        for (let currentYear = startYear; currentYear <= endYear; currentYear++) {
+                            const age = currentYear - birthYear;
+                            const startBalance = investment;
+
+                            (oneTimeEvents || []).forEach(event => {
+                                if (getParsedValue(event.year) === currentYear) {
+                                    const amount = getParsedValue(event.amount);
+                                    if (event.type === 'income') investment += amount; else investment -= amount;
+                                }
+                            });
+
+                            let totalExpense = (expenses || []).reduce((sum, exp) => sum + (getParsedValue(exp.amount) * Math.pow(1 + getParsedValue(exp.growthRate) / 100, currentYear - startYear)), 0);
+                            
+                            let totalIncome = (incomes || []).reduce((sum, inc) => {
+                                if (currentYear >= getParsedValue(inc.startYear)) {
+                                    const yearsToStart = getParsedValue(inc.startYear) - TODAY_YEAR;
+                                    const amountAtStart = getParsedValue(inc.amount) * Math.pow(1 + getParsedValue(inc.growthRate) / 100, yearsToStart > 0 ? yearsToStart : 0);
+                                    const yearsFromStart = currentYear - getParsedValue(inc.startYear);
+                                    return sum + (amountAtStart * Math.pow(1 + getParsedValue(inc.growthRate) / 100, yearsFromStart > 0 ? yearsFromStart : 0));
+                                }
+                                return sum;
+                            }, 0);
+
+                            investment -= (totalExpense - totalIncome);
+                            if (investment > 0) investment *= (1 + getParsedValue(settings.investmentReturn) / 100);
+                            if (investment <= 0 && fundDepletionYear > endYear) fundDepletionYear = currentYear;
+                            
+                            yearlyData.push({ year: currentYear, age, startBalance: Math.round(startBalance), endBalance: Math.max(0, Math.round(investment)) });
                         }
-                        if (s.id === currentScenario.id) {
-                            setCurrentScenario(updatedScenario);
-                        }
-                        return updatedScenario;
-                    }
-                    return s;
-                });
-                setSavedScenarios(newSavedScenarios);
+                        return { yearlyData, fundDepletionYear };
+                    }).filter(Boolean);
+                    
+                    setSimulationResults(results);
+                    setIsCalculating(false);
+                    resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
+                }, 500);
             };
             
-            const isAnySimulationReady = savedScenarios.some(s => s.startYear && s.endYear && s.birthYear && s.startYear <= s.endYear);
-            
-            const allYearlyData = simulationResults.map(r => r && r.yearlyData).filter(Boolean).flat();
-            const minYear = allYearlyData.length > 0 ? Math.min(...allYearlyData.map(d => d.year)) : TODAY_YEAR;
-            const maxYear = allYearlyData.length > 0 ? Math.max(...allYearlyData.map(d => d.year)) : TODAY_YEAR + 40;
-            
-            const tableRows = [];
-            if(isAnySimulationReady){
-                for (let year = minYear; year <= maxYear; year++) {
-                    const row = { year, balances: [] };
-                    let age = null;
-                    if (savedScenarios.length > 0 && savedScenarios[0].birthYear) {
-                        age = year - parseInt(savedScenarios[0].birthYear, 10);
-                    }
+            const expenseFields = [
+                { key: 'name', label: '항목명', placeholder: '예: 주거비', className: 'sm:col-span-11', row: 1, defaultValue: '' },
+                { key: 'amount', label: '연간 금액', type: 'number', placeholder: '24000', className: 'sm:col-span-7', row: 2, defaultValue: 0 },
+                { key: 'growthRate', label: '상승률 (%)', type: 'number', placeholder: '3', step: '0.1', className: 'sm:col-span-3', row: 2, defaultValue: 3, hasDelete: true }
+            ];
 
-                    simulationResults.forEach((result, index) => {
-                        if(result){
-                            const dataPoint = result.yearlyData.find(d => d.year === year);
-                            row.balances[index] = dataPoint ? dataPoint.endBalance : null;
-                        } else {
-                            row.balances[index] = null;
-                        }
-                    });
-                    row.age = age;
-                    tableRows.push(row);
-                }
-            }
-
-            const currentScenarioIndex = savedScenarios.findIndex(s => s.id === currentScenario.id);
-            const currentSimulationResult = simulationResults[currentScenarioIndex];
+            const incomeFields = [
+                { key: 'name', label: '항목명', placeholder: '예: CPP 연금', className: 'sm:col-span-8', row: 1, defaultValue: '' },
+                { key: 'startYear', label: '시작 연도', type: 'number', placeholder: '2045', className: 'sm:col-span-4', row: 1, defaultValue: TODAY_YEAR + 20 },
+                { key: 'amount', label: '연간 금액 (현재 가치)', type: 'number', placeholder: '15000', className: 'sm:col-span-7', row: 2, defaultValue: 0 },
+                { key: 'growthRate', label: '상승률 (%)', type: 'number', placeholder: '2.5', step: '0.1', className: 'sm:col-span-4', row: 2, defaultValue: 2.5, hasDelete: true }
+            ];
+            
+            const oneTimeEventFields = [
+                { key: 'name', label: '항목명', placeholder: '예: 자동차 구매', className: 'sm:col-span-8', row: 1, defaultValue: '' },
+                { key: 'type', label: '유형', type: 'select', options: [{value: 'income', label: '수입'}, {value: 'expense', label: '지출'}], className: 'sm:col-span-4', row: 1, defaultValue: 'expense', tooltip: '일회성 수입(예: 상속)은 수입, 일회성 지출(예: 자동차 구매)은 지출로 선택하세요.' },
+                { key: 'amount', label: '금액', type: 'number', placeholder: '40000', className: 'sm:col-span-6', row: 2, defaultValue: 0 },
+                { key: 'year', label: '발생 연도', type: 'number', placeholder: '2035', className: 'sm:col-span-5', row: 2, defaultValue: TODAY_YEAR + 10, hasDelete: true }
+            ];
 
             return (
-                <div className="max-w-screen-2xl mx-auto p-4 sm:p-6 lg:p-8">
-                    <header className="text-center mb-8">
-                        <h1 className="text-3xl sm:text-4xl font-bold">Advanced Retirement Calculator</h1>
-                        <p className="text-gray-400 mt-2">Build, save, and compare multiple retirement scenarios.</p>
+                <div className="max-w-screen-lg mx-auto p-4 sm:p-6 lg:p-8">
+                    <header className="text-center mb-6">
+                        <h1 className="text-3xl sm:text-4xl font-bold">고급 은퇴 플래너</h1>
+                        <p className="text-gray-400 mt-2">다양한 시나리오를 만들고 비교하여 미래를 계획하세요.</p>
                     </header>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        <div className="lg:col-span-2">
-                             <ScenarioPanel 
-                                scenario={currentScenario}
-                                setScenario={setCurrentScenario}
-                                titleColor="text-green-400"
-                            />
-                        </div>
-                        <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                             <h2 className="text-xl md:text-2xl font-bold text-center text-gray-300 mb-4">Saved Scenarios</h2>
-                             <div className="space-y-3">
-                                {savedScenarios.map((s, index) => (
-                                    <div key={s.id} className={`p-3 rounded-lg flex items-center justify-between border ${currentScenario.id === s.id ? 'border-green-400 bg-green-400/10' : 'border-gray-600 bg-gray-700'}`}>
-                                        <div className="flex items-center min-w-0">
-                                            <div className={`w-4 h-4 rounded-full mr-3 flex-shrink-0`} style={{backgroundColor: colors[index]}}></div>
-                                            <span className="font-semibold truncate">{s.name}</span>
-                                        </div>
-                                        <div className="flex items-center space-x-2 flex-shrink-0">
-                                            <button onClick={() => handleLoadScenario(s.id)} className="p-2 text-gray-300 hover:text-white hover:bg-gray-600 rounded-full" title="Load Scenario">
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fillRule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clipRule="evenodd" /></svg>
-                                            </button>
-                                            <button onClick={() => handleCopyScenario(s.id)} className="p-2 text-gray-300 hover:text-white hover:bg-blue-600 rounded-full" title="Copy Scenario">
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" /></svg>
-                                            </button>
-                                            <button onClick={() => handleRemoveScenario(s.id)} className="p-2 text-gray-300 hover:text-white hover:bg-red-700 rounded-full" title="Remove Scenario">
-                                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
-                             </div>
-                             <div className="mt-4">
-                                {savedScenarios.length < 3 && (
-                                    <button onClick={handleSaveAsNew} className="w-full py-2 px-4 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-md">Add New Scenario</button>
-                                )}
-                             </div>
-                        </div>
-                    </div>
                     
-                    <div className="space-y-8 mt-8">
-                        <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                            <div className="flex justify-center border-b border-gray-600 mb-4">
-                                <button onClick={() => setActiveTab('current')} className={`py-2 px-4 text-lg font-semibold ${activeTab === 'current' ? 'text-green-400 border-b-2 border-green-400' : 'text-gray-400'}`}>Current Scenario</button>
-                                <button onClick={() => setActiveTab('comparison')} className={`py-2 px-4 text-lg font-semibold ${activeTab === 'comparison' ? 'text-green-400 border-b-2 border-green-400' : 'text-gray-400'}`}>Comparison</button>
-                            </div>
-
-                            {isAnySimulationReady ? (
-                                <>
-                                    <div className={activeTab === 'current' ? '' : 'hidden'}>
-                                        {currentSimulationResult && 
-                                            <ComparisonChart 
-                                                scenarios={[currentScenario]} 
-                                                simulationResults={[currentSimulationResult]} 
-                                                colors={[colors[currentScenarioIndex]]} 
-                                            />
-                                        }
-                                    </div>
-                                    <div className={activeTab === 'comparison' ? '' : 'hidden'}>
-                                        <ComparisonChart 
-                                            scenarios={savedScenarios} 
-                                            simulationResults={simulationResults} 
-                                            colors={colors} 
-                                        />
-                                    </div>
-                                    <p className="text-center text-xs text-gray-400 mt-4">
-                                        Hover or tap on the data points in the graph to see detailed information (age, assets).
-                                    </p>
-                                    <WhatIfAnalysis 
-                                        activeTab={activeTab}
-                                        savedScenarios={savedScenarios}
-                                        currentScenario={currentScenario}
-                                        onQuickChange={handleQuickChange}
-                                        colors={colors}
-                                    />
-                                </>
-                            ) : (
-                                <div className="h-96 flex items-center justify-center text-gray-400">
-                                    Please set a valid simulation period (Start Year must be less than or equal to End Year).
+                    <div className="p-4 bg-gray-900 rounded-xl mb-6 border border-gray-700">
+                        <h2 className="text-lg font-semibold text-center mb-3">시나리오 관리자</h2>
+                        <div className="flex flex-wrap justify-center items-center gap-2">
+                            {scenarios.map(s => (
+                                <div key={s.id} className="flex rounded-md shadow-sm">
+                                    <button onClick={() => setActiveScenarioId(s.id)} className={`px-4 py-2 text-sm font-semibold rounded-l-md ${activeScenarioId === s.id ? 'scenario-tab-active' : 'scenario-tab-inactive'}`}>
+                                        {s.name}
+                                    </button>
+                                    <button onClick={() => handleCopyScenario(s.id)} disabled={scenarios.length >= 3} className="px-2 py-2 bg-gray-600 hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-white" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" /></svg>
+                                    </button>
+                                     <button onClick={() => handleRemoveScenario(s.id)} disabled={scenarios.length <= 1} className="px-2 py-2 bg-red-800 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-r-md">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-white" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                    </button>
                                 </div>
+                            ))}
+                            {scenarios.length < 3 && (
+                                <button onClick={handleAddScenario} className="px-4 py-2 text-sm font-semibold bg-green-600 hover:bg-green-700 rounded-md flex items-center">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
+                                    시나리오 추가
+                                </button>
                             )}
                         </div>
+                    </div>
+
+                    {activeScenario && <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                        <div className="flex items-center justify-between mb-4">
+                             <h2 className="text-xl font-bold flex-1 min-w-0">
+                                <span className="mr-2 flex-shrink-0">편집 중:</span>
+                                <input 
+                                    type="text" 
+                                    value={activeScenario.name} 
+                                    onChange={e => {
+                                        const newName = e.target.value;
+                                        updateActiveScenario(scenario => ({...scenario, name: newName}));
+                                    }}
+                                    className="bg-transparent text-blue-400 font-bold border-b-2 border-transparent focus:border-blue-400 outline-none w-full"
+                                />
+                             </h2>
+                        </div>
                         
-                        {isAnySimulationReady && (
-                            <>
-                                <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                                     <h2 className="text-2xl font-semibold mb-6 text-center">Simulation Summary Comparison</h2>
-                                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-center items-center">
-                                         <div className="font-medium text-gray-200 text-right hidden md:block">Fund Depletion</div>
-                                         {savedScenarios.map((s, index) => {
-                                             const result = simulationResults[index];
-                                             const scenario = s;
-                                             let depletionText;
+                        <div className="mb-6 flex flex-wrap justify-center border-b border-gray-600">
+                            <button onClick={() => setActiveDataTab('settings')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'settings' ? 'data-tab-active' : 'data-tab-inactive'}`}>기본 설정</button>
+                            <button onClick={() => setActiveDataTab('expenses')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'expenses' ? 'data-tab-active' : 'data-tab-inactive'}`}>반복 지출</button>
+                            <button onClick={() => setActiveDataTab('incomes')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'incomes' ? 'data-tab-active' : 'data-tab-inactive'}`}>반복 수입</button>
+                            <button onClick={() => setActiveDataTab('oneTime')} className={`py-2 px-4 text-sm font-semibold border-b-2 ${activeDataTab === 'oneTime' ? 'data-tab-active' : 'data-tab-inactive'}`}>일회성 이벤트</button>
+                        </div>
+                        
+                        <div className={activeDataTab === 'settings' ? '' : 'hidden'}>
+                             <div className="grid grid-cols-12 gap-x-4 gap-y-4">
+                                <div className="col-span-4 md:col-span-2">
+                                    <label className="text-xs text-gray-400">출생 연도</label>
+                                    <input type="number" value={activeScenario.settings.birthYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, birthYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                </div>
+                                 <div className="col-span-4 md:col-span-2">
+                                    <label className="text-xs text-gray-400">시작 연도</label>
+                                    <input type="number" value={activeScenario.settings.startYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, startYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                </div>
+                                 <div className="col-span-4 md:col-span-2">
+                                    <label className="text-xs text-gray-400">종료 연도</label>
+                                    <input type="number" value={activeScenario.settings.endYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, endYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                </div>
+                                <div className="col-span-6 md:col-span-3">
+                                    <label className="text-xs text-gray-400">평균 수익률 (%)</label>
+                                    <input type="number" value={activeScenario.settings.investmentReturn} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, investmentReturn: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                </div>
+                                <div className="col-span-6 md:col-span-3">
+                                    <label className="text-xs text-gray-400">초기 투자금</label>
+                                    <input type="number" value={activeScenario.settings.initialInvestment} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, initialInvestment: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                </div>
+                            </div>
+                        </div>
 
-                                             if (!result || !scenario.birthYear) {
-                                                 depletionText = 'N/A';
-                                             } else if (result.fundDepletionYear > scenario.endYear) {
-                                                 depletionText = 'Sustained';
-                                             } else {
-                                                 const depletionYear = result.fundDepletionYear;
-                                                 const depletionAge = depletionYear - parseInt(scenario.birthYear, 10);
-                                                 depletionText = `Year ${depletionYear} (Age: ${depletionAge})`;
-                                             }
+                        <div className={activeDataTab === 'expenses' ? '' : 'hidden'}>
+                            <DataEntryTab items={activeScenario.expenses} setItems={(newItems) => updateActiveScenario(s => ({...s, expenses: newItems}))} fields={expenseFields} birthYear={activeScenario.settings.birthYear} />
+                        </div>
+                        <div className={activeDataTab === 'incomes' ? '' : 'hidden'}>
+                            <DataEntryTab items={activeScenario.incomes} setItems={(newItems) => updateActiveScenario(s => ({...s, incomes: newItems}))} fields={incomeFields} birthYear={activeScenario.settings.birthYear} />
+                        </div>
+                        <div className={activeDataTab === 'oneTime' ? '' : 'hidden'}>
+                            <DataEntryTab itemType="oneTimeEvents" items={activeScenario.oneTimeEvents} setItems={(newItems) => updateActiveScenario(s => ({...s, oneTimeEvents: newItems}))} fields={oneTimeEventFields} birthYear={activeScenario.settings.birthYear} />
+                        </div>
+                    </div>}
 
-                                             return (
-                                                <div key={s.id} className="p-2 rounded-lg" style={{backgroundColor: colors[index % colors.length].replace('rgb', 'rgba').replace(')', ', 0.1)')}}>
-                                                     <div className="text-xl font-bold" style={{color: colors[index % colors.length]}}>{depletionText}</div>
-                                                     <div className="text-sm font-normal text-gray-400">{s.name}</div>
-                                                 </div>
-                                             );
-                                         })}
-                                     </div>
-                                 </div>
+                    <div className="mt-6">
+                        <button onClick={runAllSimulations} disabled={isCalculating} className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white font-bold rounded-md text-lg flex items-center justify-center">
+                            {isCalculating ? (
+                                <><div className="loader mr-3"></div><span>계산 중...</span></>
+                            ) : (
+                                <span>모든 시나리오 실행 및 비교</span>
+                            )}
+                        </button>
+                    </div>
 
-                                <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                                     <h2 className="text-2xl font-semibold mb-4 text-center">Detailed Year-by-Year Comparison</h2>
-                                     <div className="overflow-x-auto max-h-[80vh] relative">
-                                         <table className="w-full border-collapse text-sm">
-                                             <thead className="bg-gray-900 sticky top-0">
-                                                 <tr>
-                                                     <th className="border border-gray-600 p-2">Year</th>
-                                                     <th className="border border-gray-600 p-2">Age</th>
-                                                     {savedScenarios.map((s, index) => (
-                                                        <th key={s.id} className="border border-gray-600 p-2" style={{color: colors[index % colors.length]}}>{s.name}</th>
-                                                     ))}
-                                                 </tr>
-                                             </thead>
-                                             <tbody>
-                                                 {tableRows.map((row, index) => (
-                                                     <tr key={index} className="hover:bg-gray-700">
-                                                         <td className="border border-gray-600 p-2 text-center font-medium">{row.year}</td>
-                                                         <td className="border border-gray-600 p-2 text-center font-medium">{row.age ?? 'N/A'}</td>
-                                                         {savedScenarios.map((s, sIndex) => {
-                                                            const balance = row.balances[sIndex];
-                                                            return (
-                                                                <td key={s.id} className={`border border-gray-600 p-2 text-right font-semibold ${balance !== null && balance <= 0 ? 'text-red-500' : 'text-gray-200'}`}>
-                                                                    {balance !== null ? formatCurrency(balance) : 'N/A'}
-                                                                </td>
-                                                            )
-                                                         })}
-                                                     </tr>
-                                                 ))}
-                                             </tbody>
-                                         </table>
-                                     </div>
-                                 </div>
-                            </>
-                        )}
+                    <div ref={resultsRef}>
+                        <ComparisonResults scenarios={scenarios} simulationResults={simulationResults} />
                     </div>
                 </div>
             );
         };
 
-        ReactDOM.render(<RetirementCalculator />, document.getElementById('root'));
+        ReactDOM.render(<App />, document.getElementById('root'));
     </script>
 </body>
 </html>
