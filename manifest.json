@@ -1,6 +1,6 @@
 {
-  "short_name": "은퇴 계산기",
-  "name": "고급 은퇴 계산기",
+  "short_name": "RetirePlan",
+  "name": "Advanced Retirement Planner",
   "icons": [
     {
       "src": "icon-192x192.png",
