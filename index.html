@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Retirement Planner</title>
+    <title>고급 은퇴 플래너 (최적화 및 몬테카를로 엔진)</title>
     <meta name="theme-color" content="#111827"/>
     <link rel="manifest" href="manifest.json">
     
@@ -33,17 +33,17 @@
         .tooltip { position: relative; display: inline-flex; align-items: center; }
         .tooltip .tooltiptext {
             visibility: hidden;
-            width: 220px;
+            width: 250px;
             background-color: #1f2937;
             color: #fff;
-            text-align: center;
+            text-align: left;
             border-radius: 6px;
-            padding: 5px;
+            padding: 8px;
             position: absolute;
             z-index: 10;
             bottom: 150%;
             left: 50%;
-            margin-left: -110px;
+            margin-left: -125px;
             opacity: 0;
             transition: opacity 0.3s;
             border: 1px solid #374151;
@@ -68,30 +68,60 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useMemo } = React;
         
-        // Deep copy utility
+        // --- 유틸리티 함수 ---
         const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
         const TODAY_YEAR = new Date().getFullYear();
-        
-        // Function to create a new scenario
+        const formatCurrency = (amount, digits = 0) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: digits, maximumFractionDigits: digits }).format(amount);
+        const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
+        // 정규 분포 난수 생성 (Box-Muller 변환)
+        const generateNormalRandom = (mean, stddev) => {
+            let u1 = 0, u2 = 0;
+            while(u1 === 0) u1 = Math.random();
+            while(u2 === 0) u2 = Math.random();
+            const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+            return z0 * stddev + mean;
+        };
+
+        // --- 시나리오 생성 함수 (몬테카를로 설정 추가) ---
         const createNewScenario = (name) => ({
             id: new Date().getTime(),
             name: name,
             settings: {
-                birthYear: 1980,
-                startYear: TODAY_YEAR + 5,
-                endYear: TODAY_YEAR + 45,
-                initialInvestment: 500000,
-                investmentReturn: 6,
+                birthYear: 1981,
+                startYear: 2031,
+                endYear: 2081,
+                rrspBalance: 1000000,
+                tfsaBalance: 500000,
+                nonRegisteredBalance: 2000000,
+                investmentReturn: 7, // 개별 시뮬레이션용
+                nonRegGainAssumption: 50, 
+                taxInflationRate: 2.5,
+                // --- 몬테카를로 설정 ---
+                volatilityMode: 'discrete', // 'discrete' 또는 'auto'
+                portfolioComposition: { growth: 60, dividend: 20, bond: 20 },
+                annualMedianReturn: 7, // 몬테카를로용
+                volatility: 15, // 몬테카를로용
+                simulationCount: 5000,
             },
-            expenses: [],
-            incomes: [],
-            oneTimeEvents: [],
+            expenses: [
+                { id: 1, name: '생활비', amount: 20000, startYear: 2031, growthRate: 3 },
+                { id: 2, name: '보험비', amount: 5000, startYear: 2031, growthRate: 3 },
+                { id: 3, name: '여행비', amount: 10000, startYear: 2031, growthRate: 3 },
+            ],
+            incomes: [
+                 { id: 1, name: '기타연금', amount: 2000, startYear: 2041, growthRate: 3 },
+                 { id: 2, name: 'CPP', amount: 2500, startYear: 2046, growthRate: 3 },
+                 { id: 3, name: 'OAS', amount: 1000, startYear: 2046, growthRate: 3 },
+            ],
+            oneTimeEvents: [
+                 { id: 1, name: '병원비', type: 'expense', amount: 30000, year: 2061 },
+            ],
             marketCrashes: [],
         });
 
-        // Tooltip Component
+        // --- 컴포넌트 ---
         const Tooltip = ({ text }) => (
             <div className="tooltip ml-1">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
@@ -100,258 +130,68 @@
                 <span className="tooltiptext">{text}</span>
             </div>
         );
-
-        // --- Data Entry Component ---
-        const DataEntryTab = ({ items, setItems, fields, birthYear }) => {
-            const handleItemChange = (id, field, value) => {
-                setItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
-            };
-
-            const handleAddItem = () => {
-                const newItem = { id: new Date().getTime() };
-                fields.forEach(field => newItem[field.key] = field.defaultValue);
-                setItems(prev => [...(prev || []), newItem]);
-            };
-
-            const handleRemoveItem = (id) => {
-                setItems(prev => prev.filter(item => item.id !== id));
-            };
-
+        
+        const ExplanationAccordion = () => {
+            const [isOpen, setIsOpen] = useState(false);
             return (
-                <div className="space-y-4">
-                    {(items || []).map(item => {
-                        const yearFieldKey = item.hasOwnProperty('startYear') ? 'startYear' : 'year';
-                        const itemYear = item[yearFieldKey];
-                        const ageAtEvent = (birthYear && itemYear && String(itemYear).length === 4) ?
-                            parseInt(itemYear, 10) - parseInt(birthYear, 10) : null;
-                        
-                        const fieldGroups = fields.reduce((acc, field) => {
-                            acc[field.row] = acc[field.row] || [];
-                            acc[field.row].push(field);
-                            return acc;
-                        }, {});
-
-                        return (
-                            <div key={item.id} className="p-4 bg-gray-900/50 rounded-lg border border-gray-700">
-                                <div className="flex flex-col space-y-2">
-                                    {Object.values(fieldGroups).map((rowFields, rowIndex) => (
-                                        <div key={rowIndex} className="grid grid-cols-12 gap-x-4 items-start">
-                                            {rowFields.map(field => (
-                                                <div key={field.key} className={`col-span-12 ${field.className}`}>
-                                                    <label className="text-xs text-gray-400 flex items-center">
-                                                        {field.label}
-                                                        {field.tooltip && <Tooltip text={field.tooltip} />}
-                                                    </label>
-                                                    {field.type === 'select' ? (
-                                                        <select value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
-                                                            {field.options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                                                        </select>
-                                                    ) : (
-                                                        <input type={field.type || 'text'} value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md" placeholder={field.placeholder || ''} step={field.step || 'any'} />
-                                                    )}
-                                                    { (field.key === 'startYear' || field.key === 'year') && ageAtEvent !== null && ageAtEvent >= 0 && (
-                                                        <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">(Age: {ageAtEvent})</div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                            {rowFields.some(f => f.hasDelete) && (
-                                                 <div className="col-span-1 self-center">
-                                                    <button onClick={() => handleRemoveItem(item.id)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        );
-                    })}
-                    <button onClick={handleAddItem} className="w-full mt-4 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md flex items-center justify-center">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
-                        Add Item
+                <div className="bg-gray-800 border border-gray-700 rounded-xl mb-6">
+                    <button onClick={() => setIsOpen(!isOpen)} className="w-full p-4 text-left font-semibold text-lg flex justify-between items-center">
+                        <span>이 계산기는 어떻게 작동하나요?</span>
+                        <svg className={`w-6 h-6 transition-transform transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
                     </button>
-                </div>
-            );
-        };
-
-        // --- Comparison Results Component ---
-        const ComparisonResults = ({ scenarios, simulationResults }) => {
-            const chartRef = useRef(null);
-            const chartInstanceRef = useRef(null);
-            const [selectedTableScenarioId, setSelectedTableScenarioId] = useState('none');
-            const colors = ['#34D399', '#F472B6', '#FBBF24'];
-            const pointStyles = ['circle', 'triangle', 'star'];
-            const shapeIcons = ['●', '▲', '★'];
-            const formatCurrency = (amount) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(amount);
-
-            useEffect(() => {
-                if (!simulationResults || simulationResults.length === 0 || !chartRef.current) return;
-                
-                if (chartInstanceRef.current) chartInstanceRef.current.destroy();
-
-                const allYears = simulationResults.flatMap(r => r.yearlyData.map(d => d.year));
-                if (allYears.length === 0) return;
-
-                const minYear = Math.min(...allYears);
-                const maxYear = Math.max(...allYears);
-                const labels = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
-
-                const datasets = simulationResults.map((result, index) => {
-                    const scenario = scenarios[index];
-                    const dataMap = new Map(result.yearlyData.map(d => [d.year, d.endBalance]));
-                    const chartData = labels.map(year => dataMap.has(year) ? dataMap.get(year) : null);
-
-                    return {
-                        label: scenario.name,
-                        data: chartData,
-                        borderColor: colors[index % colors.length],
-                        backgroundColor: colors[index % colors.length] + '33',
-                        fill: true,
-                        tension: 0.3,
-                        spanGaps: true,
-                        pointStyle: pointStyles[index % pointStyles.length],
-                        pointRadius: 5,
-                        pointHoverRadius: 7,
-                    };
-                });
-
-                const ctx = chartRef.current.getContext('2d');
-                chartInstanceRef.current = new Chart(ctx, {
-                    type: 'line',
-                    data: { labels, datasets },
-                    options: {
-                        responsive: true, 
-                        maintainAspectRatio: false,
-                        interaction: {
-                            mode: 'index',
-                            intersect: false,
-                        },
-                        plugins: { 
-                            legend: { 
-                                labels: { 
-                                    color: '#D1D5DB',
-                                    usePointStyle: true,
-                                } 
-                            },
-                            tooltip: {
-                                callbacks: {
-                                    title: function(tooltipItems) {
-                                        if (tooltipItems.length > 0) {
-                                            const year = tooltipItems[0].label;
-                                            return `Year: ${year}`;
-                                        }
-                                        return '';
-                                    },
-                                    label: function(context) {
-                                        let label = context.dataset.label || '';
-                                        if (label) {
-                                            label += ': ';
-                                        }
-                                        if (context.parsed.y !== null) {
-                                            label += new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(context.parsed.y);
-                                        }
-                                        
-                                        const year = parseInt(context.label, 10);
-                                        const scenarioIndex = context.datasetIndex;
-                                        if (scenarios[scenarioIndex]) {
-                                            const birthYear = scenarios[scenarioIndex].settings.birthYear;
-                                            const age = year - birthYear;
-                                            label += ` (Age: ${age})`;
-                                        }
-                                        
-                                        return label;
-                                    }
-                                }
-                            }
-                        },
-                        scales: { 
-                            y: { ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000) + 'k' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }, 
-                            x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } 
-                        }
-                    }
-                });
-
-            }, [scenarios, simulationResults]);
-
-            const selectedResult = simulationResults.find((r, i) => scenarios[i].id === Number(selectedTableScenarioId));
-
-            if (!simulationResults || simulationResults.length === 0) return null;
-            
-            return (
-                <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 mt-6">
-                    <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">Comparison Results</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mb-6">
-                        {simulationResults.map((result, index) => {
-                            const scenario = scenarios[index];
-                            const age = result.fundDepletionYear > scenario.settings.endYear ? null : result.fundDepletionYear - scenario.settings.birthYear;
-                            const depletionText = age ? `${result.fundDepletionYear} (Age: ${age})` : 'Sustained';
-                            return (
-                                <div key={scenario.id} className="p-3 rounded-lg" style={{backgroundColor: colors[index % colors.length] + '22'}}>
-                                    <div className="text-sm font-semibold flex items-center justify-center" style={{color: colors[index % colors.length]}}>
-                                        <span className="mr-2 text-lg">{shapeIcons[index % shapeIcons.length]}</span>
-                                        {scenario.name}
-                                    </div>
-                                    <div className="text-lg font-bold text-gray-200">{depletionText}</div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                    <div className="relative h-96"><canvas ref={chartRef}></canvas></div>
-                    
-                    <div className="mt-6">
-                        <label htmlFor="table-select" className="block text-sm font-medium text-gray-300 mb-2">View Detailed Data:</label>
-                        <select 
-                            id="table-select"
-                            value={selectedTableScenarioId} 
-                            onChange={e => setSelectedTableScenarioId(e.target.value)}
-                            className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md"
-                        >
-                            <option value="none">Hide Table</option>
-                            {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
-                    </div>
-
-                    {selectedResult && (
-                        <div className="mt-4 max-h-96 overflow-y-auto">
-                            <table className="w-full text-sm text-left text-gray-400">
-                                <thead className="text-xs text-gray-300 uppercase bg-gray-700/50 sticky top-0">
-                                    <tr>
-                                        <th scope="col" className="px-6 py-3">Year</th>
-                                        <th scope="col" className="px-6 py-3">Age</th>
-                                        <th scope="col" className="px-6 py-3">End-of-Year Balance</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {selectedResult.yearlyData.map(data => (
-                                        <tr key={data.year} className="border-b border-gray-700 hover:bg-gray-700/30">
-                                            <td className="px-6 py-2">{data.year}</td>
-                                            <td className="px-6 py-2">{data.age}</td>
-                                            <td className="px-6 py-2">{formatCurrency(data.endBalance)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                    {isOpen && (
+                        <div className="p-4 border-t border-gray-700 text-gray-300 space-y-4">
+                            <p>이 도구는 두 가지 핵심 기능을 제공합니다: <strong>최적화</strong> (시나리오 비교) 및 <strong>검증</strong> (몬테카를로 테스트).</p>
+                            <div>
+                                <h4 className="font-semibold text-gray-200">최적화 예시: $35,001을 인출하고 세금을 $0 내는 방법</h4>
+                                <p>생활비로 $35,001이 필요할 때, 최적화 엔진은 세금을 최소화하는 최적의 인출 조합을 찾습니다:</p>
+                                <ol className="list-decimal list-inside mt-1 space-y-1">
+                                     <li><strong>RRSP에서 $3,500 (10%)</strong> 인출 (과세 소득: $3,500)</li>
+                                     <li><strong>비등록 계좌에서 $31,501 (90%)</strong> 인출 (이 중 자본 이득으로 간주되는 부분, 예: $7,875만 과세)</li>
+                                     <li><strong>총과세소득:</strong> $3,500 (RRSP) + $7,875 (비등록 수익) = $11,375</li>
+                                     <li><strong>결론:</strong> 이 총액은 캐나다의 기본 개인 공제액(약 $16,129)보다 낮으므로 최종 세금은 <strong>$0</strong>입니다.</li>
+                                </ol>
+                            </div>
+                             <div>
+                                <h4 className="font-semibold text-gray-200">검증: 몬테카를로 시뮬레이션</h4>
+                                <p>단순히 고정된 수익률 대신, 설정한 '중간 수익률'과 '변동성'을 바탕으로 수천 번의 무작위 시장 상황을 시뮬레이션합니다. 이를 통해 은퇴 계획이 예상치 못한 시장 변동 속에서 얼마나 안정적인지 <strong>성공 확률</strong>로 보여줍니다.</p>
+                            </div>
                         </div>
                     )}
                 </div>
             );
         };
 
-        // --- Main App Component ---
+        const DataEntryTab = ({ items, setItems, fields, birthYear }) => {
+            const handleItemChange = (id, field, value) => { setItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item)); };
+            const handleAddItem = () => { const newItem = { id: new Date().getTime() }; fields.forEach(field => newItem[field.key] = field.defaultValue); setItems(prev => [...(prev || []), newItem]); };
+            const handleRemoveItem = (id) => { setItems(prev => prev.filter(item => item.id !== id)); };
+            return ( <div className="space-y-4"> {(items || []).map(item => { const yearFieldKey = item.hasOwnProperty('startYear') ? 'startYear' : 'year'; const itemYear = item[yearFieldKey]; const ageAtEvent = (birthYear && itemYear && String(itemYear).length === 4) ? parseInt(itemYear, 10) - parseInt(birthYear, 10) : null; const fieldGroups = fields.reduce((acc, field) => { acc[field.row] = acc[field.row] || []; acc[field.row].push(field); return acc; }, {}); return ( <div key={item.id} className="p-4 bg-gray-900/50 rounded-lg border border-gray-700"> <div className="flex flex-col space-y-2"> {Object.values(fieldGroups).map((rowFields, rowIndex) => ( <div key={rowIndex} className="grid grid-cols-12 gap-x-4 items-end"> {rowFields.map(field => ( <div key={field.key} className={`col-span-12 ${field.className}`}> <label className="text-xs text-gray-400 flex items-center">{field.label}{field.tooltip && <Tooltip text={field.tooltip} />}</label> {field.type === 'select' ? ( <select value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"> {field.options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)} </select> ) : ( <input type={field.type || 'text'} value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md" placeholder={field.placeholder || ''} step={field.step || 'any'} /> )} { (field.key === 'startYear' || field.key === 'year') && ageAtEvent !== null && ageAtEvent >= 0 && ( <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">(Age: {ageAtEvent})</div> )} </div> ))} <div className="col-span-1 self-center"> <button onClick={() => handleRemoveItem(item.id)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full"> <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg> </button> </div> </div> ))} </div> </div> ); })} <button onClick={handleAddItem} className="w-full mt-4 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md flex items-center justify-center"> <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg> 항목 추가 </button> </div> ); };
+        
+        const VolatilityTab = ({ scenario, updateScenario, runMonteCarloTest, isCalculatingMC, clearMCResults, marketCrashFields }) => { const { settings } = scenario; const handleModeChange = (mode) => { updateScenario(s => ({ ...s, settings: { ...s.settings, volatilityMode: mode } })); clearMCResults(); }; const handlePortfolioChange = (type, value) => { const newPortfolio = { ...settings.portfolioComposition, [type]: getParsedValue(value) }; updateScenario(s => ({ ...s, settings: { ...s.settings, portfolioComposition: newPortfolio } })); }; const handleSettingChange = (key, value) => { updateScenario(s => ({ ...s, settings: { ...s.settings, [key]: value } })); }; const recommendedValues = useMemo(() => { const { growth, dividend, bond } = settings.portfolioComposition; const total = getParsedValue(growth) + getParsedValue(dividend) + getParsedValue(bond); if (total === 0) return { return: 0, volatility: 0 }; const assetProfiles = { growth: { return: 9.5, volatility: 22 }, dividend: { return: 6.0, volatility: 15 }, bond: { return: 3.5, volatility: 7 } }; const recommendedReturn = ((growth * assetProfiles.growth.return + dividend * assetProfiles.dividend.return + bond * assetProfiles.bond.return) / total).toFixed(1); const recommendedVolatility = ((growth * assetProfiles.growth.volatility + dividend * assetProfiles.dividend.volatility + bond * assetProfiles.bond.volatility) / total).toFixed(1); return { return: recommendedReturn, volatility: recommendedVolatility }; }, [settings.portfolioComposition]); return ( <div className="space-y-6"> <div> <label className="text-sm font-medium text-gray-300 mb-2 block">변동성 모드</label> <div className="flex space-x-2 rounded-lg bg-gray-900/50 p-1 border border-gray-700"> <button onClick={() => handleModeChange('discrete')} className={`w-full py-2 text-sm font-semibold rounded-md transition-colors ${settings.volatilityMode === 'discrete' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}>개별 이벤트 모드</button> <button onClick={() => handleModeChange('auto')} className={`w-full py-2 text-sm font-semibold rounded-md transition-colors ${settings.volatilityMode === 'auto' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}>자동 모드 (몬테카를로)</button> </div> </div> {settings.volatilityMode === 'auto' ? ( <div className="p-4 bg-gray-900/50 rounded-lg border border-gray-700 space-y-4"> <h4 className="text-lg font-semibold text-gray-300">자동 모드 설정</h4> <div> <label className="text-sm font-medium text-gray-300 mb-1 block">포트폴리오 구성 (%)</label> <div className="grid grid-cols-3 gap-4"> <div><label className="text-xs text-gray-400">성장주</label><input type="number" step="10" min="0" max="100" value={settings.portfolioComposition.growth} onChange={e => handlePortfolioChange('growth', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div> <div><label className="text-xs text-gray-400">배당주</label><input type="number" step="10" min="0" max="100" value={settings.portfolioComposition.dividend} onChange={e => handlePortfolioChange('dividend', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div> <div><label className="text-xs text-gray-400">채권</label><input type="number" step="10" min="0" max="100" value={settings.portfolioComposition.bond} onChange={e => handlePortfolioChange('bond', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div> </div> </div> <div className="grid grid-cols-1 md:grid-cols-2 gap-4"> <div> <label className="text-sm font-medium text-gray-300 mb-1 block">연간 중간 수익률 (%)</label> <input type="number" step="0.1" value={settings.annualMedianReturn} onChange={e => handleSettingChange('annualMedianReturn', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/> <p className="text-xs text-gray-400 mt-1">추천: {recommendedValues.return}%</p> </div> <div> <label className="text-sm font-medium text-gray-300 mb-1 block">변동성 (표준편차, %)</label> <input type="number" step="0.1" value={settings.volatility} onChange={e => handleSettingChange('volatility', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/> <p className="text-xs text-gray-400 mt-1">추천: {recommendedValues.volatility}%</p> </div> </div> <div> <label className="text-sm font-medium text-gray-300 mb-1 block">시뮬레이션 횟수</label> <select value={settings.simulationCount} onChange={e => handleSettingChange('simulationCount', Number(e.target.value))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md" > <option value="1000">1,000회 (빠름, ~10초)</option> <option value="5000">5,000회 (표준, ~50초)</option> <option value="10000">10,000회 (정밀, ~100초)</option> </select> </div> <button onClick={runMonteCarloTest} disabled={isCalculatingMC} className="w-full mt-2 py-2 px-4 bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:cursor-not-allowed text-white font-bold rounded-md flex items-center justify-center"> {isCalculatingMC ? <><div className="loader mr-3"></div><span>{`계산 중 (${settings.simulationCount.toLocaleString()}회)...`}</span></> : '몬테카를로 테스트 실행'} </button> </div> ) : ( <DataEntryTab items={scenario.marketCrashes} setItems={(updater) => updateScenario(s => ({...s, marketCrashes: updater(s.marketCrashes)}))} fields={marketCrashFields} birthYear={settings.birthYear} /> )} </div> ); };
+        
+        const MonteCarloResults = ({ results }) => { const chartRef = useRef(null); const chartInstanceRef = useRef(null); useEffect(() => { if (!results || !results.processedPlotData || !chartRef.current) return; if (chartInstanceRef.current) chartInstanceRef.current.destroy(); const { processedPlotData, startYear, endYear } = results; const labels = Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i); const datasets = [ { label: '중간값 (50 percentile)', data: processedPlotData.p50, borderColor: '#34D399', borderWidth: 2, pointRadius: 0, tension: 0.1 }, { label: '비관적 (10 percentile)', data: processedPlotData.p10, borderColor: 'rgba(248, 113, 113, 0.5)', borderWidth: 1, pointRadius: 0, borderDash: [5, 5], tension: 0.1 }, { label: '낙관적 (90 percentile)', data: processedPlotData.p90, borderColor: 'rgba(56, 189, 248, 0.5)', backgroundColor: 'rgba(56, 189, 248, 0.1)', borderWidth: 1, pointRadius: 0, borderDash: [5, 5], tension: 0.1, fill: '-1' } ]; const ctx = chartRef.current.getContext('2d'); chartInstanceRef.current = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#D1D5DB' } }, tooltip: { mode: 'index', intersect: false, callbacks: { label: function(context) { let label = context.dataset.label || ''; if (label) { label += ': '; } if (context.parsed.y !== null) { label += formatCurrency(context.parsed.y); } return label; } } } }, scales: { y: { ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000000) + 'M' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }, x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } } } }); }, [results]); if (!results) return null; return ( <div className="bg-gray-900/50 p-6 rounded-xl shadow-lg border border-gray-700 mt-6"> <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">몬테카를로 테스트 결과</h2> <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-center mb-6"> <div className="p-4 rounded-lg bg-green-900/50"> <div className="text-sm font-semibold text-green-400">성공 확률</div> <div className="text-3xl font-bold text-gray-200">{results.successRate.toFixed(1)}%</div> <div className="text-xs text-gray-400">({results.successCount.toLocaleString()} / {results.simulationCount.toLocaleString()}회 성공)</div> </div> <div className="p-4 rounded-lg bg-gray-800 border border-gray-700"> <div className="text-sm font-semibold text-gray-400 mb-2">최종 연도 자산 잔액</div> <div className="text-sm text-left space-y-1"> <p><span className="font-semibold text-sky-400">낙관적 (상위 10%):</span> {formatCurrency(results.finalBalances.p90)}</p> <p><span className="font-semibold text-gray-300">중간값 (50%):</span> {formatCurrency(results.finalBalances.p50)}</p> <p><span className="font-semibold text-red-400">비관적 (하위 10%):</span> {formatCurrency(results.finalBalances.p10)}</p> </div> </div> </div> <div> <h3 className="text-lg font-semibold text-center mb-2">예상 자산 범위</h3> <div className="relative h-96"><canvas ref={chartRef}></canvas></div> </div> </div> ) };
+        
+        const ComparisonResults = ({ scenarios, simulationResults }) => { const chartRef = useRef(null); const chartInstanceRef = useRef(null); const [selectedTableScenarioId, setSelectedTableScenarioId] = useState(scenarios.length > 0 ? scenarios[0].id : 'none'); const colors = ['#34D399', '#F472B6', '#FBBF24']; const pointStyles = ['circle', 'triangle', 'star']; const shapeIcons = ['●', '▲', '★']; useEffect(() => { if (!simulationResults || simulationResults.length === 0 || !chartRef.current) return; if (chartInstanceRef.current) chartInstanceRef.current.destroy(); const allYears = simulationResults.flatMap(r => r.yearlyData.map(d => d.year)); if (allYears.length === 0) return; const minYear = Math.min(...allYears); const maxYear = Math.max(...allYears); const labels = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i); const datasets = simulationResults.map((result, index) => { const scenario = scenarios[index]; const dataMap = new Map(result.yearlyData.map(d => [d.year, d.totalEndBalance])); const chartData = labels.map(year => dataMap.has(year) ? dataMap.get(year) : null); return { label: scenario.name, data: chartData, borderColor: colors[index % colors.length], backgroundColor: colors[index % colors.length] + '33', fill: true, tension: 0.3, spanGaps: true, pointStyle: pointStyles[index % pointStyles.length], pointRadius: 5, pointHoverRadius: 7, }; }); const ctx = chartRef.current.getContext('2d'); chartInstanceRef.current = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { color: '#D1D5DB', usePointStyle: true } }, tooltip: { callbacks: { title: (tooltipItems) => tooltipItems.length > 0 ? `Year: ${tooltipItems[0].label}` : '', label: (context) => { let label = context.dataset.label || ''; if (label) label += ': '; if (context.parsed.y !== null) label += formatCurrency(context.parsed.y); const year = parseInt(context.label, 10); const scenarioIndex = context.datasetIndex; if (scenarios[scenarioIndex]) { const birthYear = scenarios[scenarioIndex].settings.birthYear; label += ` (Age: ${year - birthYear})`; } return label; } } } }, scales: { y: { ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000000) + 'M' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }, x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } } } }); }, [scenarios, simulationResults]); const selectedResult = simulationResults.find((r, i) => scenarios[i].id === Number(selectedTableScenarioId)); if (!simulationResults || simulationResults.length === 0) return null; return ( <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 mt-6"> <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">시나리오 비교 결과</h2> <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mb-6"> {simulationResults.map((result, index) => { const scenario = scenarios[index]; const age = result.fundDepletionYear > scenario.settings.endYear ? null : result.fundDepletionYear - scenario.settings.birthYear; const depletionText = age ? `${result.fundDepletionYear}년 (만 ${age}세)` : '자금 유지됨'; return ( <div key={scenario.id} className="p-3 rounded-lg" style={{backgroundColor: colors[index % colors.length] + '22'}}> <div className="text-sm font-semibold flex items-center justify-center" style={{color: colors[index % colors.length]}}> <span className="mr-2 text-lg">{shapeIcons[index % shapeIcons.length]}</span> {scenario.name} </div> <div className="text-lg font-bold text-gray-200">{depletionText}</div> </div> ); })} </div> <div className="relative h-96"><canvas ref={chartRef}></canvas></div> <div className="mt-6"> <label htmlFor="table-select" className="block text-sm font-medium text-gray-300 mb-2">상세 데이터 보기:</label> <select id="table-select" value={selectedTableScenarioId} onChange={e => setSelectedTableScenarioId(e.target.value)} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md" > <option value="none">표 숨기기</option> {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)} </select> </div> {selectedResult && ( <div className="mt-4 max-h-96 overflow-y-auto"> <table className="w-full text-sm text-left text-gray-400"> <thead className="text-xs text-gray-300 uppercase bg-gray-700/50 sticky top-0"> <tr> <th scope="col" className="px-4 py-3">연도 (나이)</th> <th scope="col" className="px-4 py-3">최적 비율 (R/T/N)</th> <th scope="col" className="px-4 py-3">총 인출액</th> <th scope="col" className="px-4 py-3">납부 세금</th> <th scope="col" className="px-4 py-3">기말 잔액</th> </tr> </thead> <tbody> {selectedResult.yearlyData.map(data => ( <tr key={data.year} className="border-b border-gray-700 hover:bg-gray-700/30"> <td className="px-4 py-2">{data.year} ({data.age})</td> <td className="px-4 py-2 font-mono">{data.optimalRatio ? `${data.optimalRatio.rrsp}/${data.optimalRatio.tfsa}/${data.optimalRatio.nonReg}` : 'N/A'}</td> <td className="px-4 py-2">{formatCurrency(data.grossWithdrawal)}</td> <td className="px-4 py-2">{formatCurrency(data.taxPaid)}</td> <td className="px-4 py-2">{formatCurrency(data.totalEndBalance)}</td> </tr> ))} </tbody> </table> </div> )} </div> ); };
+        
+        const VerificationDashboard = ({ simulationResults, scenarios }) => { const [selectedScenarioId, setSelectedScenarioId] = useState(scenarios.length > 0 ? scenarios[0].id : null); const [selectedYear, setSelectedYear] = useState(null); const selectedResult = useMemo(() => { return simulationResults.find((r, i) => scenarios[i].id === Number(selectedScenarioId)); }, [selectedScenarioId, simulationResults, scenarios]); useEffect(() => { if(selectedResult && selectedResult.yearlyData.length > 0) { const targetYear = selectedResult.yearlyData.find(d => d.age === 80)?.year; setSelectedYear(targetYear || selectedResult.yearlyData[0].year); } else { setSelectedYear(null); } }, [selectedResult]); if (!selectedResult) return null; const yearData = selectedResult.yearlyData.find(d => d.year === selectedYear); const prevYearData = selectedResult.yearlyData.find(d => d.year === selectedYear - 1); const nextYearData = selectedResult.yearlyData.find(d => d.year === selectedYear + 1); const displayData = (data, field) => data ? (field === 'balance' ? `${formatCurrency(data.rrspStartBalance)} / ${formatCurrency(data.tfsaStartBalance)} / ${formatCurrency(data.nonRegStartBalance)}` : formatCurrency(data[field])) : 'N/A'; const displayRatio = (data) => data && data.optimalRatio ? `${data.optimalRatio.rrsp}% / ${data.optimalRatio.tfsa}% / ${data.optimalRatio.nonReg}%` : 'N/A'; return ( <div className="bg-gray-900/50 p-6 rounded-xl shadow-lg border border-gray-700 mt-6"> <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">⚙️ 최적화 엔진 대시보드 (검증용)</h2> <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6"> <div> <label className="text-sm font-medium text-gray-300 mb-1 block">시나리오 선택:</label> <select value={selectedScenarioId || ''} onChange={e => setSelectedScenarioId(e.target.value)} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md"> {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)} </select> </div> <div> <label className="text-sm font-medium text-gray-300 mb-1 block">검증할 연도 선택:</label> <select value={selectedYear || ''} onChange={e => setSelectedYear(Number(e.target.value))} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md"> {selectedResult.yearlyData.map(d => <option key={d.year} value={d.year}>{d.year} (만 {d.age}세)</option>)} </select> </div> </div> {yearData && ( <div> <h3 className="text-lg font-semibold text-gray-300 mb-2">연도별 비교</h3> <div className="overflow-x-auto"> <table className="w-full text-sm text-left text-gray-400"> <thead className="text-xs text-gray-300 uppercase bg-gray-700/50"> <tr> <th className="px-4 py-2">항목</th> <th className="px-4 py-2">{selectedYear - 1}년 (만 {yearData.age - 1}세)</th> <th className="px-4 py-2 bg-blue-900/50">{selectedYear}년 (만 {yearData.age}세)</th> <th className="px-4 py-2">{selectedYear + 1}년 (만 {yearData.age + 1}세)</th> </tr> </thead> <tbody> <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">기초 잔액 (R/T/N)</td><td className="px-4 py-2 font-mono">{displayData(prevYearData, 'balance')}</td><td className="px-4 py-2 font-mono bg-blue-900/30">{displayData(yearData, 'balance')}</td><td className="px-4 py-2 font-mono">{displayData(nextYearData, 'balance')}</td></tr> <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">필요 순수 인출액</td><td className="px-4 py-2">{displayData(prevYearData, 'targetNetWithdrawal')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'targetNetWithdrawal')}</td><td className="px-4 py-2">{displayData(nextYearData, 'targetNetWithdrawal')}</td></tr> <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">최적 비율 (R/T/N)</td><td className="px-4 py-2 font-mono">{displayRatio(prevYearData)}</td><td className="px-4 py-2 font-mono bg-blue-900/30">{displayRatio(yearData)}</td><td className="px-4 py-2 font-mono">{displayRatio(nextYearData)}</td></tr> <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">총 인출액</td><td className="px-4 py-2">{displayData(prevYearData, 'grossWithdrawal')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'grossWithdrawal')}</td><td className="px-4 py-2">{displayData(nextYearData, 'grossWithdrawal')}</td></tr> <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">납부 세금</td><td className="px-4 py-2">{displayData(prevYearData, 'taxPaid')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'taxPaid')}</td><td className="px-4 py-2">{displayData(nextYearData, 'taxPaid')}</td></tr> </tbody> </table> </div> <h3 className="text-lg font-semibold text-gray-300 mt-6 mb-2">{selectedYear}년 계산 공식</h3> <div className="p-4 bg-gray-900 rounded-lg space-y-2 text-sm font-mono border border-gray-700"> <p><span className="text-green-400">과세 소득:</span> {formatCurrency(yearData.taxableIncome)} = {formatCurrency(yearData.recurringIncome)} (고정수입) + {formatCurrency(yearData.oneTimeIncome)} (일회성수입) + {formatCurrency(yearData.taxableWithdrawals.rrsp)} (RRSP) + {formatCurrency(yearData.taxableWithdrawals.nonReg)} (비등록수익)</p> <p><span className="text-yellow-400">납부 세금:</span> {formatCurrency(yearData.taxPaid)} = 연방세({formatCurrency(yearData.taxableIncome)}) + 주정부세({formatCurrency(yearData.taxableIncome)}) - 세액공제</p> <p><span className="text-cyan-400">순수 지출:</span> {formatCurrency(yearData.targetNetWithdrawal)} (생활비) + {formatCurrency(yearData.taxPaid)} (세금) = {formatCurrency(yearData.targetNetWithdrawal + yearData.taxPaid)}</p> <p><span className="text-cyan-400">총 인출액:</span> {formatCurrency(yearData.grossWithdrawal)} ≈ 순수 지출</p> </div> <h3 className="text-lg font-semibold text-gray-300 mt-6 mb-2">{selectedYear}년 최적화 테스트 결과 (66개 조합)</h3> <div className="max-h-80 overflow-y-auto"> <table className="w-full text-xs text-left text-gray-400"> <thead className="text-gray-300 uppercase bg-gray-700/50 sticky top-0"> <tr> <th className="px-2 py-2">비율 (R/T/N)</th> <th className="px-2 py-2">비용 (총 인출액)</th> <th className="px-2 py-2">상태</th> </tr> </thead> <tbody className="font-mono"> {yearData.optimizationAttempts.map((attempt, i) => ( <tr key={i} className={`border-b border-gray-800 ${attempt.status === 'Optimal' ? 'bg-green-800/50 text-white' : attempt.status === 'Failed' ? 'bg-red-800/30 text-gray-500' : ''}`}> <td className="px-2 py-1">{attempt.ratio.rrsp}/{attempt.ratio.tfsa}/{attempt.ratio.nonReg}</td> <td className="px-2 py-1">{attempt.cost === Infinity ? 'N/A' : formatCurrency(attempt.cost)}</td> <td className="px-2 py-1">{attempt.status === 'Optimal' ? '최적' : (attempt.status === 'Success' ? '성공' : '실패')}</td> </tr> ))} </tbody> </table> </div> </div> )} </div> ); };
+
+        // --- 메인 앱 컴포넌트 ---
         const App = () => {
             const [scenarios, setScenarios] = useState(() => {
-                const saved = localStorage.getItem('retirementScenarios');
-                return saved ? JSON.parse(saved) : [createNewScenario('Scenario 1')];
+                const saved = localStorage.getItem('retirementScenarios_Complete_v2');
+                return saved ? JSON.parse(saved) : [createNewScenario('내 시나리오')];
             });
             const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
             const [activeDataTab, setActiveDataTab] = useState('settings');
-            const [simulationResults, setSimulationResults] = useState([]);
+            const [comparisonResults, setComparisonResults] = useState([]);
+            const [monteCarloResults, setMonteCarloResults] = useState(null);
             const [isCalculating, setIsCalculating] = useState(false);
+            const [isCalculatingMC, setIsCalculatingMC] = useState(false);
             const resultsRef = useRef(null);
 
             useEffect(() => {
-                localStorage.setItem('retirementScenarios', JSON.stringify(scenarios));
+                localStorage.setItem('retirementScenarios_Complete_v2', JSON.stringify(scenarios));
             }, [scenarios]);
 
             const activeScenario = scenarios.find(s => s.id === activeScenarioId) || scenarios[0];
@@ -360,268 +200,198 @@
                 setScenarios(prev => prev.map(s => s.id === activeScenarioId ? updater(s) : s));
             };
             
-            const handleAddScenario = () => {
-                if (scenarios.length < 3) {
-                    const newScenario = createNewScenario(`Scenario ${scenarios.length + 1}`);
-                    setScenarios(prev => [...prev, newScenario]);
-                    setActiveScenarioId(newScenario.id);
-                }
+            const handleAddScenario = () => { if (scenarios.length < 3) { const newScenario = createNewScenario(`시나리오 ${scenarios.length + 1}`); setScenarios(prev => [...prev, newScenario]); setActiveScenarioId(newScenario.id); } };
+            const handleCopyScenario = () => { if (scenarios.length < 3) { const scenarioToCopy = scenarios.find(s => s.id === activeScenarioId); const newScenario = deepCopy(scenarioToCopy); newScenario.id = new Date().getTime(); newScenario.name = `${scenarioToCopy.name} (복사본)`; setScenarios(prev => [...prev, newScenario]); setActiveScenarioId(newScenario.id); } };
+            const handleRemoveScenario = () => { if (scenarios.length > 1) { const newScenarios = scenarios.filter(s => s.id !== activeScenarioId); setScenarios(newScenarios); setActiveScenarioId(newScenarios[0].id); } };
+
+            const calculateTax = (taxableIncome, year, startYear, taxInflationRate) => {
+                const inflationFactor = Math.pow(1 + taxInflationRate / 100, year - startYear);
+                const fedBrackets = [ { limit: 57375 * inflationFactor, rate: 0.15 }, { limit: 114750 * inflationFactor, rate: 0.205 }, { limit: 177882 * inflationFactor, rate: 0.26 }, { limit: 253414 * inflationFactor, rate: 0.29 }, { limit: Infinity, rate: 0.33 } ];
+                const onBrackets = [ { limit: 52886 * inflationFactor, rate: 0.0505 }, { limit: 105775 * inflationFactor, rate: 0.0915 }, { limit: 150000, rate: 0.1116 }, { limit: 220000, rate: 0.1216 }, { limit: Infinity, rate: 0.1316 } ];
+                const fedBPA = 16129 * inflationFactor; const onBPA = 12747 * inflationFactor;
+                const calculateBracketTax = (income, brackets) => { let tax = 0; let remainingIncome = income; let lastLimit = 0; for (const bracket of brackets) { const currentLimit = bracket.limit; if (remainingIncome > 0) { const taxableInBracket = Math.min(remainingIncome, currentLimit - lastLimit); tax += taxableInBracket * bracket.rate; remainingIncome -= taxableInBracket; lastLimit = currentLimit; } else { break; } } return tax; };
+                const fedTax = calculateBracketTax(taxableIncome, fedBrackets); const onTax = calculateBracketTax(taxableIncome, onBrackets);
+                const fedCredit = Math.min(taxableIncome, fedBPA) * fedBrackets[0].rate; const onCredit = Math.min(taxableIncome, onBPA) * onBrackets[0].rate;
+                return Math.max(0, (fedTax + onTax) - (fedCredit + onCredit));
             };
+            
+            const runSingleSimulation = (scenario, isMonteCarloRun = false) => {
+                const { settings, expenses, incomes, oneTimeEvents, marketCrashes } = scenario;
+                let balances = { rrsp: getParsedValue(settings.rrspBalance), tfsa: getParsedValue(settings.tfsaBalance), nonReg: getParsedValue(settings.nonRegisteredBalance) };
+                const yearlyData = [];
+                const startYear = getParsedValue(settings.startYear); const endYear = getParsedValue(settings.endYear); const birthYear = getParsedValue(settings.birthYear);
+                let fundDepletionYear = endYear + 1;
+                const withdrawalRatios = [];
+                for (let rrsp = 10; rrsp >= 0; rrsp--) { for (let tfsa = 10 - rrsp; tfsa >= 0; tfsa--) { let nonReg = 10 - rrsp - tfsa; withdrawalRatios.push({ rrsp: rrsp * 10, tfsa: tfsa * 10, nonReg: nonReg * 10 }); } }
 
-            const handleCopyScenario = () => {
-                if (scenarios.length < 3) {
-                    const scenarioToCopy = scenarios.find(s => s.id === activeScenarioId);
-                    const newScenario = deepCopy(scenarioToCopy);
-                    newScenario.id = new Date().getTime();
-                    newScenario.name = `${scenarioToCopy.name} (Copy)`;
-                    setScenarios(prev => [...prev, newScenario]);
-                    setActiveScenarioId(newScenario.id);
-                }
-            };
+                for (let currentYear = startYear; currentYear <= endYear; currentYear++) {
+                    const age = currentYear - birthYear;
+                    const startBalances = deepCopy(balances);
 
-            const handleRemoveScenario = () => {
-                if (scenarios.length > 1) {
-                    const newScenarios = scenarios.filter(s => s.id !== activeScenarioId);
-                    setScenarios(newScenarios);
-                    setActiveScenarioId(newScenarios[0].id);
-                }
-            };
-
-            const runAllSimulations = () => {
-                setIsCalculating(true);
-                setSimulationResults([]);
-
-                setTimeout(() => {
-                    const results = scenarios.map(scenario => {
-                        const { settings, expenses, incomes, oneTimeEvents, marketCrashes } = scenario;
-                        const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
-                        let investment = getParsedValue(settings.initialInvestment);
-                        const yearlyData = [];
-                        const startYear = getParsedValue(settings.startYear);
-                        const endYear = getParsedValue(settings.endYear);
-                        const birthYear = getParsedValue(settings.birthYear);
-                        let fundDepletionYear = endYear + 1;
-
-                        if (!startYear || !endYear || !birthYear || startYear > endYear) return null;
-
-                        for (let currentYear = startYear; currentYear <= endYear; currentYear++) {
-                            const age = currentYear - birthYear;
-                            let startBalance = investment;
-
-                            // Apply start-of-year market crashes
-                            (marketCrashes || []).forEach(crash => {
-                                const crashStartYear = getParsedValue(crash.startYear);
-                                const duration = getParsedValue(crash.duration);
-                                if (duration > 0 && crash.timing === 'start' && currentYear >= crashStartYear && currentYear < crashStartYear + duration) {
-                                    const totalDecline = -Math.abs(getParsedValue(crash.totalDecline));
-                                    const finalValueMultiplier = 1 + totalDecline / 100;
-                                    const annualMultiplier = Math.pow(finalValueMultiplier, 1 / duration);
-                                    investment *= annualMultiplier;
-                                }
-                            });
-
-                            // Apply one-time events
-                            (oneTimeEvents || []).forEach(event => {
-                                if (getParsedValue(event.year) === currentYear) {
-                                    const amount = getParsedValue(event.amount);
-                                    if (event.type === 'income') investment += amount; else investment -= amount;
-                                }
-                            });
-
-                            // Calculate and apply recurring income/expenses
-                            let totalExpense = (expenses || []).reduce((sum, exp) => {
-                                const yearsFromToday = currentYear - TODAY_YEAR;
-                                return sum + (getParsedValue(exp.amount) * Math.pow(1 + getParsedValue(exp.growthRate) / 100, yearsFromToday > 0 ? yearsFromToday : 0));
-                            }, 0);
-                            
-                            let totalIncome = (incomes || []).reduce((sum, inc) => {
-                                if (currentYear >= getParsedValue(inc.startYear)) {
-                                    const yearsToStart = getParsedValue(inc.startYear) - TODAY_YEAR;
-                                    const amountAtStart = getParsedValue(inc.amount) * Math.pow(1 + getParsedValue(inc.growthRate) / 100, yearsToStart > 0 ? yearsToStart : 0);
-                                    const yearsFromStart = currentYear - getParsedValue(inc.startYear);
-                                    return sum + (amountAtStart * Math.pow(1 + getParsedValue(inc.growthRate) / 100, yearsFromStart > 0 ? yearsFromStart : 0));
-                                }
-                                return sum;
-                            }, 0);
-
-                            investment -= (totalExpense - totalIncome);
-
-                            // Apply standard investment return
-                            if (investment > 0) {
-                                investment *= (1 + getParsedValue(settings.investmentReturn) / 100);
-                            }
-                            
-                            // Apply end-of-year market crashes
-                            (marketCrashes || []).forEach(crash => {
-                                const crashStartYear = getParsedValue(crash.startYear);
-                                const duration = getParsedValue(crash.duration);
-                                if (duration > 0 && crash.timing === 'end' && currentYear >= crashStartYear && currentYear < crashStartYear + duration) {
-                                    const totalDecline = -Math.abs(getParsedValue(crash.totalDecline));
-                                    const finalValueMultiplier = 1 + totalDecline / 100;
-                                    const annualMultiplier = Math.pow(finalValueMultiplier, 1 / duration);
-                                    investment *= annualMultiplier;
-                                }
-                            });
-
-                            if (investment <= 0 && fundDepletionYear > endYear) {
-                                fundDepletionYear = currentYear;
-                            }
-                            
-                            yearlyData.push({ year: currentYear, age, startBalance: Math.round(startBalance), endBalance: Math.max(0, Math.round(investment)) });
-                        }
-                        return { yearlyData, fundDepletionYear };
-                    }).filter(Boolean);
+                    let currentInvestmentReturn;
+                    if (isMonteCarloRun) {
+                        currentInvestmentReturn = generateNormalRandom(getParsedValue(settings.annualMedianReturn), getParsedValue(settings.volatility));
+                    } else if (settings.volatilityMode === 'auto') {
+                        currentInvestmentReturn = getParsedValue(settings.annualMedianReturn);
+                    } else {
+                        currentInvestmentReturn = getParsedValue(settings.investmentReturn);
+                    }
                     
-                    setSimulationResults(results);
-                    setIsCalculating(false);
+                    const totalRecurringExpense = (expenses || []).reduce((sum, exp) => (currentYear >= getParsedValue(exp.startYear)) ? sum + (getParsedValue(exp.amount) * Math.pow(1 + getParsedValue(exp.growthRate) / 100, currentYear - getParsedValue(exp.startYear))) : sum, 0);
+                    const oneTimeExpense = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'expense' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
+                    let targetNetWithdrawal = totalRecurringExpense + oneTimeExpense;
+                    const recurringIncome = (incomes || []).reduce((sum, inc) => (currentYear >= getParsedValue(inc.startYear)) ? sum + (getParsedValue(inc.amount) * Math.pow(1 + getParsedValue(inc.growthRate) / 100, currentYear - getParsedValue(inc.startYear))) : sum, 0);
+                    const oneTimeIncome = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'income' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
+                    let rrifMinWithdrawal = (age >= 72) ? startBalances.rrsp * (1 / (90 - age)) : 0;
+                    
+                    let bestAttempt = { cost: Infinity, ratio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {} };
+                    const optimizationAttempts = [];
+
+                    for (const ratio of withdrawalRatios) {
+                        let low = 0, high = (targetNetWithdrawal + recurringIncome + oneTimeIncome) * 2; let grossWithdrawal = targetNetWithdrawal; let iterations = 0;
+                        while (iterations < 25) {
+                            grossWithdrawal = (low + high) / 2; if (grossWithdrawal < 0.01) { grossWithdrawal = 0; break; }
+                            let w = { rrsp: grossWithdrawal * (ratio.rrsp / 100), tfsa: grossWithdrawal * (ratio.tfsa / 100), nonReg: grossWithdrawal * (ratio.nonReg / 100) };
+                            if (w.rrsp < rrifMinWithdrawal) { const shortfall = rrifMinWithdrawal - w.rrsp; grossWithdrawal += shortfall; w.rrsp = rrifMinWithdrawal; }
+                            if (w.rrsp > startBalances.rrsp || w.tfsa > startBalances.tfsa || w.nonReg > startBalances.nonReg) { grossWithdrawal = Infinity; break; }
+                            const nonRegTaxableGain = w.nonReg * (getParsedValue(settings.nonRegGainAssumption) / 100) * 0.5;
+                            const taxableIncome = recurringIncome + oneTimeIncome + w.rrsp + nonRegTaxableGain;
+                            const taxPaid = calculateTax(taxableIncome, currentYear, startYear, getParsedValue(settings.taxInflationRate));
+                            const cashNeeded = targetNetWithdrawal + taxPaid; const shortfall = cashNeeded - grossWithdrawal;
+                            if (Math.abs(shortfall) < 1) break; if (shortfall > 0) low = grossWithdrawal; else high = grossWithdrawal; iterations++;
+                        }
+                        const attempt = { ratio, cost: grossWithdrawal, status: 'Failed' };
+                        if (grossWithdrawal !== Infinity) {
+                            attempt.status = 'Success';
+                            if (grossWithdrawal < bestAttempt.cost) {
+                                let finalRRSPWithdrawal = grossWithdrawal * (ratio.rrsp / 100); if (finalRRSPWithdrawal < rrifMinWithdrawal) { grossWithdrawal += rrifMinWithdrawal - finalRRSPWithdrawal; finalRRSPWithdrawal = rrifMinWithdrawal; }
+                                const finalNonRegWithdrawal = grossWithdrawal * (ratio.nonReg / 100); const nonRegTaxableGain = finalNonRegWithdrawal * (getParsedValue(settings.nonRegGainAssumption) / 100) * 0.5;
+                                const taxableIncome = recurringIncome + oneTimeIncome + finalRRSPWithdrawal + nonRegTaxableGain;
+                                bestAttempt = { cost: grossWithdrawal, ratio, grossWithdrawal, taxPaid: calculateTax(taxableIncome, currentYear, startYear, getParsedValue(settings.taxInflationRate)), taxableIncome, taxableWithdrawals: { rrsp: finalRRSPWithdrawal, nonReg: nonRegTaxableGain } };
+                            }
+                        }
+                        if (!isMonteCarloRun) optimizationAttempts.push(attempt);
+                    }
+                    if (bestAttempt.ratio && !isMonteCarloRun) { optimizationAttempts.find(a => a.ratio === bestAttempt.ratio).status = 'Optimal'; }
+                    if (bestAttempt.ratio) { balances.rrsp -= bestAttempt.taxableWithdrawals.rrsp; balances.tfsa -= bestAttempt.grossWithdrawal * (bestAttempt.ratio.tfsa / 100); balances.nonReg -= bestAttempt.grossWithdrawal * (bestAttempt.ratio.nonReg / 100); }
+                    balances.nonReg += recurringIncome + oneTimeIncome;
+                    const growthRate = 1 + currentInvestmentReturn / 100;
+                    balances.rrsp *= growthRate; balances.tfsa *= growthRate; balances.nonReg *= growthRate;
+                    if (settings.volatilityMode === 'discrete' && !isMonteCarloRun) {
+                        (marketCrashes || []).forEach(crash => {
+                            const crashStartYear = getParsedValue(crash.startYear); const duration = getParsedValue(crash.duration);
+                            if (duration > 0 && currentYear >= crashStartYear && currentYear < crashStartYear + duration) {
+                                const annualMultiplier = Math.pow(1 + (-Math.abs(getParsedValue(crash.totalDecline)) / 100), 1 / duration);
+                                balances.rrsp *= annualMultiplier; balances.tfsa *= annualMultiplier; balances.nonReg *= annualMultiplier;
+                            }
+                        });
+                    }
+                    const totalEndBalance = balances.rrsp + balances.tfsa + balances.nonReg;
+                    if (totalEndBalance <= 0 && fundDepletionYear > endYear) { fundDepletionYear = currentYear; }
+                    const dataToPush = { year: currentYear, age, totalEndBalance: Math.max(0, totalEndBalance) };
+                    if (!isMonteCarloRun) {
+                        Object.assign(dataToPush, { rrspStartBalance: startBalances.rrsp, tfsaStartBalance: startBalances.tfsa, nonRegStartBalance: startBalances.nonReg, targetNetWithdrawal, recurringIncome, oneTimeIncome, optimalRatio: bestAttempt.ratio, grossWithdrawal: bestAttempt.grossWithdrawal, taxPaid: bestAttempt.taxPaid, taxableIncome: bestAttempt.taxableIncome, taxableWithdrawals: bestAttempt.taxableWithdrawals, optimizationAttempts });
+                    }
+                    yearlyData.push(dataToPush);
+                }
+                return { yearlyData, fundDepletionYear };
+            };
+
+            const runAllSimulationsForComparison = () => {
+                setIsCalculating(true); setComparisonResults([]); setMonteCarloResults(null);
+                setTimeout(() => {
+                    const results = scenarios.map(scenario => runSingleSimulation(scenario, false)).filter(Boolean);
+                    setComparisonResults(results); setIsCalculating(false);
+                    resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
+                }, 500);
+            };
+
+            const runMonteCarloTest = () => {
+                setIsCalculatingMC(true); setMonteCarloResults(null);
+                setTimeout(() => {
+                    const NUM_SIMULATIONS = activeScenario.settings.simulationCount || 5000;
+                    const allRunsYearlyData = [];
+                    for (let i = 0; i < NUM_SIMULATIONS; i++) {
+                        const result = runSingleSimulation(activeScenario, true);
+                        allRunsYearlyData.push(result.yearlyData);
+                    }
+                    const finalBalances = allRunsYearlyData.map(run => run[run.length - 1].totalEndBalance);
+                    finalBalances.sort((a, b) => a - b);
+                    const successCount = finalBalances.filter(balance => balance > 0).length;
+                    const p10_path = [], p50_path = [], p90_path = [];
+                    const numYears = allRunsYearlyData[0].length;
+                    for (let i = 0; i < numYears; i++) {
+                        const yearlyBalances = allRunsYearlyData.map(run => run[i].totalEndBalance).sort((a, b) => a - b);
+                        p10_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.1)]);
+                        p50_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.5)]);
+                        p90_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.9)]);
+                    }
+                    setMonteCarloResults({
+                        successRate: (successCount / NUM_SIMULATIONS) * 100, successCount,
+                        finalBalances: { p10: finalBalances[Math.floor(NUM_SIMULATIONS * 0.1)], p50: finalBalances[Math.floor(NUM_SIMULATIONS * 0.5)], p90: finalBalances[Math.floor(NUM_SIMULATIONS * 0.9)], },
+                        processedPlotData: { p10: p10_path, p50: p50_path, p90: p90_path },
+                        startYear: getParsedValue(activeScenario.settings.startYear),
+                        endYear: getParsedValue(activeScenario.settings.endYear),
+                        simulationCount: NUM_SIMULATIONS
+                    });
+                    setIsCalculatingMC(false);
                     resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
                 }, 500);
             };
             
-            const expenseFields = [
-                { key: 'name', label: 'Item Name', placeholder: 'e.g., Housing', className: 'sm:col-span-11', row: 1, defaultValue: '' },
-                { key: 'amount', label: "Annual Amount (Today's $)", type: 'number', placeholder: '24000', className: 'sm:col-span-7', row: 2, defaultValue: 0 },
-                { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '3', step: '0.1', className: 'sm:col-span-3', row: 2, defaultValue: 3, hasDelete: true }
-            ];
-
-            const incomeFields = [
-                { key: 'name', label: 'Item Name', placeholder: 'e.g., CPP Pension', className: 'sm:col-span-8', row: 1, defaultValue: '' },
-                { key: 'startYear', label: 'Start Year', type: 'number', placeholder: '2045', className: 'sm:col-span-4', row: 1, defaultValue: TODAY_YEAR + 20 },
-                { key: 'amount', label: "Annual Amount (Today's $)", type: 'number', placeholder: '15000', className: 'sm:col-span-7', row: 2, defaultValue: 0 },
-                { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '2.5', step: '0.1', className: 'sm:col-span-4', row: 2, defaultValue: 2.5, hasDelete: true }
-            ];
-            
-            const oneTimeEventFields = [
-                { key: 'name', label: 'Item Name', placeholder: 'e.g., Car Purchase', className: 'sm:col-span-8', row: 1, defaultValue: '' },
-                { key: 'type', label: 'Type', type: 'select', options: [{value: 'income', label: 'Income'}, {value: 'expense', label: 'Expense'}], className: 'sm:col-span-4', row: 1, defaultValue: 'expense', tooltip: 'INC for one-time income (e.g., inheritance), EXP for one-time expense (e.g., car purchase).' },
-                { key: 'amount', label: 'Amount', type: 'number', placeholder: '40000', className: 'sm:col-span-6', row: 2, defaultValue: 0 },
-                { key: 'year', label: 'Year of Event', type: 'number', placeholder: '2035', className: 'sm:col-span-5', row: 2, defaultValue: TODAY_YEAR + 10, hasDelete: true }
-            ];
-
-            const marketCrashFields = [
-                { key: 'startYear', label: 'Crash Start Year', type: 'number', placeholder: TODAY_YEAR + 10, className: 'sm:col-span-4', row: 1, defaultValue: TODAY_YEAR + 10 },
-                { key: 'duration', label: 'Duration (Years)', type: 'number', placeholder: '2', className: 'sm:col-span-4', row: 1, defaultValue: 1 },
-                { key: 'totalDecline', label: 'Total Decline (%)', type: 'number', placeholder: '30', className: 'sm:col-span-4', row: 1, defaultValue: 20, tooltip: 'Enter the decline as a positive number (e.g., 30 for a 30% decline).' },
-                { key: 'timing', label: 'Timing', type: 'select', options: [{value: 'start', label: 'Start of Year'}, {value: 'end', label: 'End of Year'}], className: 'sm:col-span-11', row: 2, defaultValue: 'start', hasDelete: true, tooltip: 'Choose if the crash applies at the start or end of the year.' },
-            ];
-
-            const dataTabs = {
-                settings: { label: 'Settings', fields: [] },
-                expenses: { label: 'Recurring Expenses', fields: expenseFields },
-                incomes: { label: 'Recurring Incomes', fields: incomeFields },
-                oneTime: { label: 'One-Time Events', fields: oneTimeEventFields },
-                volatility: { label: 'Market Volatility', fields: marketCrashFields },
-            };
+            const expenseFields = [ { key: 'name', label: '항목명', placeholder: '예: 주거비', className: 'sm:col-span-7', row: 1, defaultValue: '' }, { key: 'startYear', label: '시작 연도', type: 'number', placeholder: '2031', className: 'sm:col-span-4', row: 1, defaultValue: activeScenario.settings.startYear }, { key: 'amount', label: "연간 비용", type: 'number', placeholder: '24000', className: 'sm:col-span-7', row: 2, defaultValue: 0 }, { key: 'growthRate', label: '상승률 (%)', type: 'number', placeholder: '3', step: '0.1', className: 'sm:col-span-4', row: 2, defaultValue: 3 } ];
+            const incomeFields = [ { key: 'name', label: '항목명', placeholder: '예: CPP 연금', className: 'sm:col-span-7', row: 1, defaultValue: '' }, { key: 'startYear', label: '시작 연도', type: 'number', placeholder: '2045', className: 'sm:col-span-4', row: 1, defaultValue: TODAY_YEAR + 20 }, { key: 'amount', label: "연간 수입", type: 'number', placeholder: '15000', className: 'sm:col-span-7', row: 2, defaultValue: 0 }, { key: 'growthRate', label: '상승률 (%)', type: 'number', placeholder: '2.5', step: '0.1', className: 'sm:col-span-4', row: 2, defaultValue: 2.5 } ];
+            const oneTimeEventFields = [ { key: 'name', label: '항목명', placeholder: '예: 자동차 구매', className: 'sm:col-span-7', row: 1, defaultValue: '' }, { key: 'type', label: '유형', type: 'select', options: [{value: 'income', label: '수입'}, {value: 'expense', label: '지출'}], className: 'sm:col-span-4', row: 1, defaultValue: 'expense' }, { key: 'amount', label: '금액', type: 'number', placeholder: '40000', className: 'sm:col-span-7', row: 2, defaultValue: 0 }, { key: 'year', label: '발생 연도', type: 'number', placeholder: '2035', className: 'sm:col-span-4', row: 2, defaultValue: TODAY_YEAR + 10 } ];
+            const marketCrashFields = [ { key: 'startYear', label: '폭락 시작 연도', type: 'number', placeholder: TODAY_YEAR + 10, className: 'sm:col-span-4', row: 1, defaultValue: TODAY_YEAR + 10 }, { key: 'duration', label: '지속 기간 (년)', type: 'number', placeholder: '2', className: 'sm:col-span-3', row: 1, defaultValue: 1 }, { key: 'totalDecline', label: '총 하락률 (%)', type: 'number', placeholder: '30', className: 'sm:col-span-4', row: 1, defaultValue: 20 } ];
+            const dataTabs = { settings: { label: '기본 설정' }, expenses: { label: '고정 지출' }, incomes: { label: '고정 수입' }, oneTime: { label: '일회성 이벤트' }, volatility: { label: '시장 변동성' } };
 
             return (
                 <div className="max-w-screen-lg mx-auto p-4 sm:p-6 lg:p-8">
-                    <header className="text-center mb-6">
-                        <h1 className="text-3xl sm:text-4xl font-bold">Advanced Retirement Planner</h1>
-                        <p className="text-gray-400 mt-2">Create and compare multiple scenarios to plan your future.</p>
-                    </header>
+                    <header className="text-center mb-6"><h1 className="text-3xl sm:text-4xl font-bold">은퇴 최적화 플래너</h1><p className="text-gray-400 mt-2">최적의 인출 전략을 찾고 계획의 안정성을 검증하세요.</p></header>
+                    <ExplanationAccordion />
                     
                     <div className="p-4 bg-gray-900 rounded-xl mb-6 border border-gray-700">
-                        <h2 className="text-lg font-semibold text-center mb-3">Scenario Manager</h2>
+                        <h2 className="text-lg font-semibold text-center mb-3">시나리오 관리자</h2>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-center">
-                            <select 
-                                value={activeScenarioId} 
-                                onChange={(e) => setActiveScenarioId(Number(e.target.value))}
-                                className="col-span-1 sm:col-span-2 w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md"
-                            >
-                                {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                            </select>
+                            <select value={activeScenarioId} onChange={(e) => {setActiveScenarioId(Number(e.target.value)); setMonteCarloResults(null);}} className="col-span-1 sm:col-span-2 w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md">{scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
                             <div className="flex justify-around items-center gap-2">
-                                <button onClick={handleAddScenario} disabled={scenarios.length >= 3} className="p-2 bg-green-600 hover:bg-green-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex-1 flex justify-center">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
-                                </button>
-                                <button onClick={handleCopyScenario} disabled={scenarios.length >= 3} className="p-2 bg-gray-600 hover:bg-gray-500 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex-1 flex justify-center">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" /></svg>
-                                </button>
-                                <button onClick={handleRemoveScenario} disabled={scenarios.length <= 1} className="p-2 bg-red-800 hover:bg-red-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex-1 flex justify-center">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
-                                </button>
+                                <button onClick={handleAddScenario} disabled={scenarios.length >= 3} className="p-2 bg-green-600 hover:bg-green-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex-1 flex justify-center" title="시나리오 추가"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg></button>
+                                <button onClick={handleCopyScenario} disabled={scenarios.length >= 3} className="p-2 bg-gray-600 hover:bg-gray-500 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex-1 flex justify-center" title="시나리오 복사"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" /></svg></button>
+                                <button onClick={handleRemoveScenario} disabled={scenarios.length <= 1} className="p-2 bg-red-800 hover:bg-red-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex-1 flex justify-center" title="시나리오 삭제"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg></button>
                             </div>
                         </div>
                     </div>
 
                     {activeScenario && <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-                        <div className="mb-4">
-                            <label className="text-sm font-medium text-gray-300 mb-1 block">Scenario Name</label>
-                            <input 
-                                type="text" 
-                                value={activeScenario.name} 
-                                onChange={e => {
-                                    const newName = e.target.value;
-                                    updateActiveScenario(scenario => ({...scenario, name: newName}));
-                                }}
-                                className="w-full bg-gray-900/50 border border-gray-600 text-blue-400 font-bold text-xl rounded-md p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                            />
-                        </div>
-                        
-                        <div className="mb-6">
-                            <label className="text-sm font-medium text-gray-300 mb-1 block">Data Category</label>
-                            <select 
-                                value={activeDataTab} 
-                                onChange={e => setActiveDataTab(e.target.value)}
-                                className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md"
-                            >
-                                {Object.entries(dataTabs).map(([key, { label }]) => (
-                                    <option key={key} value={key}>{label}</option>
-                                ))}
-                            </select>
-                        </div>
+                        <div className="mb-4"><label className="text-sm font-medium text-gray-300 mb-1 block">시나리오 이름</label><input type="text" value={activeScenario.name} onChange={e => updateActiveScenario(s => ({...s, name: e.target.value}))} className="w-full bg-gray-900/50 border border-gray-600 text-blue-400 font-bold text-xl rounded-md p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"/></div>
+                        <div className="mb-6"><label className="text-sm font-medium text-gray-300 mb-1 block">데이터 카테고리</label><select value={activeDataTab} onChange={e => {setActiveDataTab(e.target.value); if(e.target.value !== 'volatility') setMonteCarloResults(null);}} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md">{Object.entries(dataTabs).map(([key, { label }]) => ( <option key={key} value={key}>{label}</option> ))}</select></div>
                         
                         <div className={activeDataTab === 'settings' ? '' : 'hidden'}>
-                             <div className="grid grid-cols-12 gap-x-4 gap-y-4">
-                                <div className="col-span-4 md:col-span-2">
-                                    <label className="text-xs text-gray-400">Birth Year</label>
-                                    <input type="number" value={activeScenario.settings.birthYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, birthYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                                </div>
-                                 <div className="col-span-4 md:col-span-2">
-                                    <label className="text-xs text-gray-400">Start Year</label>
-                                    <input type="number" value={activeScenario.settings.startYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, startYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                                </div>
-                                 <div className="col-span-4 md:col-span-2">
-                                    <label className="text-xs text-gray-400">End Year</label>
-                                    <input type="number" value={activeScenario.settings.endYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, endYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                                </div>
-                                <div className="col-span-6 md:col-span-3">
-                                    <label className="text-xs text-gray-400">Avg. Return (%)</label>
-                                    <input type="number" value={activeScenario.settings.investmentReturn} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, investmentReturn: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                                </div>
-                                <div className="col-span-6 md:col-span-3">
-                                    <label className="text-xs text-gray-400">Initial Investment</label>
-                                    <input type="number" value={activeScenario.settings.initialInvestment} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, initialInvestment: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                                </div>
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                                <div><h3 className="text-lg font-semibold text-gray-300 mb-2">기간 설정</h3><div className="grid grid-cols-3 gap-2"><div><label className="text-xs text-gray-400">출생 연도</label><input type="number" value={activeScenario.settings.birthYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, birthYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div><div><label className="text-xs text-gray-400">시작 연도</label><input type="number" value={activeScenario.settings.startYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, startYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div><div><label className="text-xs text-gray-400">종료 연도</label><input type="number" value={activeScenario.settings.endYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, endYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div></div>
+                                <div><h3 className="text-lg font-semibold text-gray-300 mb-2">평균 연간 수익률</h3><div><label className="text-xs text-gray-400">수익률 (%) - 개별 이벤트 모드용</label><input type="number" value={activeScenario.settings.investmentReturn} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, investmentReturn: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div>
+                                <div className="md:col-span-2"><h3 className="text-lg font-semibold text-gray-300 mb-2">초기 자산</h3><div className="grid grid-cols-1 md:grid-cols-3 gap-2"><div><label className="text-xs text-gray-400">RRSP/RRIF</label><input type="number" value={activeScenario.settings.rrspBalance} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, rrspBalance: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div><div><label className="text-xs text-gray-400">TFSA</label><input type="number" value={activeScenario.settings.tfsaBalance} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, tfsaBalance: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div><div><label className="text-xs text-gray-400">비등록 계좌</label><input type="number" value={activeScenario.settings.nonRegisteredBalance} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, nonRegisteredBalance: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div></div>
+                                <div className="md:col-span-2"><h3 className="text-lg font-semibold text-gray-300 mb-2">고급 가정</h3><div className="grid grid-cols-1 md:grid-cols-2 gap-2"><div><label className="text-xs text-gray-400 flex items-center">비등록 계좌 수익률 가정<Tooltip text="비등록 계좌 인출액 중 투자 수익(양도차익)으로 간주할 비율을 선택합니다. 나머지는 비과세 원금으로 처리됩니다." /></label><select value={activeScenario.settings.nonRegGainAssumption} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, nonRegGainAssumption: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"><option value="30">보수적 (30%)</option><option value="50">중립 (50%)</option><option value="70">공격적 (70%)</option></select></div><div><label className="text-xs text-gray-400 flex items-center">세금 구간 인플레이션 (%)<Tooltip text="정부의 세금 구간(Tax Bracket)과 기본 개인 공제(BPA)가 매년 상승할 것으로 예상되는 인플레이션율입니다. 개인의 수입/지출 상승률과는 별개로 작동합니다." /></label><input type="number" value={activeScenario.settings.taxInflationRate} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, taxInflationRate: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div></div>
                             </div>
                         </div>
-
-                        <div className={activeDataTab === 'expenses' ? '' : 'hidden'}>
-                            <DataEntryTab items={activeScenario.expenses} setItems={(updater) => updateActiveScenario(s => ({...s, expenses: updater(s.expenses)}))} fields={expenseFields} birthYear={activeScenario.settings.birthYear} />
-                        </div>
-                        <div className={activeDataTab === 'incomes' ? '' : 'hidden'}>
-                            <DataEntryTab items={activeScenario.incomes} setItems={(updater) => updateActiveScenario(s => ({...s, incomes: updater(s.incomes)}))} fields={incomeFields} birthYear={activeScenario.settings.birthYear} />
-                        </div>
-                        <div className={activeDataTab === 'oneTime' ? '' : 'hidden'}>
-                            <DataEntryTab items={activeScenario.oneTimeEvents} setItems={(updater) => updateActiveScenario(s => ({...s, oneTimeEvents: updater(s.oneTimeEvents)}))} fields={oneTimeEventFields} birthYear={activeScenario.settings.birthYear} />
-                        </div>
+                        <div className={activeDataTab === 'expenses' ? '' : 'hidden'}><DataEntryTab items={activeScenario.expenses} setItems={(updater) => updateActiveScenario(s => ({...s, expenses: updater(s.expenses)}))} fields={expenseFields} birthYear={activeScenario.settings.birthYear} /></div>
+                        <div className={activeDataTab === 'incomes' ? '' : 'hidden'}><DataEntryTab items={activeScenario.incomes} setItems={(updater) => updateActiveScenario(s => ({...s, incomes: updater(s.incomes)}))} fields={incomeFields} birthYear={activeScenario.settings.birthYear} /></div>
+                        <div className={activeDataTab === 'oneTime' ? '' : 'hidden'}><DataEntryTab items={activeScenario.oneTimeEvents} setItems={(updater) => updateActiveScenario(s => ({...s, oneTimeEvents: updater(s.oneTimeEvents)}))} fields={oneTimeEventFields} birthYear={activeScenario.settings.birthYear} /></div>
                         <div className={activeDataTab === 'volatility' ? '' : 'hidden'}>
-                            <DataEntryTab items={activeScenario.marketCrashes} setItems={(updater) => updateActiveScenario(s => ({...s, marketCrashes: updater(s.marketCrashes)}))} fields={marketCrashFields} birthYear={activeScenario.settings.birthYear} />
+                            <VolatilityTab scenario={activeScenario} updateScenario={updateActiveScenario} runMonteCarloTest={runMonteCarloTest} isCalculatingMC={isCalculatingMC} clearMCResults={() => setMonteCarloResults(null)} marketCrashFields={marketCrashFields} />
                         </div>
                     </div>}
 
                     <div className="mt-6">
-                        <button onClick={runAllSimulations} disabled={isCalculating} className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white font-bold rounded-md text-lg flex items-center justify-center">
-                            {isCalculating ? (
-                                <><div className="loader mr-3"></div><span>Calculating...</span></>
-                            ) : (
-                                <span>Run & Compare All Scenarios</span>
-                            )}
+                        <button onClick={runAllSimulationsForComparison} disabled={isCalculating} className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white font-bold rounded-md text-lg flex items-center justify-center">
+                            {isCalculating ? <><div className="loader mr-3"></div><span>계산 중...</span></> : <span>모든 시나리오 실행 및 비교</span>}
                         </button>
                     </div>
 
                     <div ref={resultsRef}>
-                        <ComparisonResults scenarios={scenarios} simulationResults={simulationResults} />
+                        <ComparisonResults scenarios={scenarios} simulationResults={comparisonResults} />
+                        {comparisonResults.length > 0 && <VerificationDashboard simulationResults={comparisonResults} scenarios={scenarios} />}
+                        {monteCarloResults && <MonteCarloResults results={monteCarloResults} /> }
                     </div>
                 </div>
             );
@@ -630,9 +400,10 @@
         ReactDOM.render(<App />, document.getElementById('root'));
     </script>
     <script>
+        // PWA 서비스 워커 등록
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/service-worker.js').then(registration => {
+                navigator.serviceWorker.register('service-worker.js').then(registration => {
                     console.log('ServiceWorker registration successful with scope: ', registration.scope);
                 }, err => {
                     console.log('ServiceWorker registration failed: ', err);
