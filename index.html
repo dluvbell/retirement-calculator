@@ -195,7 +195,7 @@
         // --- Main App Component ---
         const App = () => {
             const [scenarios, setScenarios] = useState(() => {
-                const saved = localStorage.getItem('retirementScenarios_Complete_v11_final_logic');
+                const saved = localStorage.getItem('retirementScenarios_Complete_v12_final');
                 return saved ? JSON.parse(saved) : [createNewScenario('My Scenario')];
             });
             const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
@@ -207,7 +207,7 @@
             const resultsRef = useRef(null);
 
             useEffect(() => {
-                localStorage.setItem('retirementScenarios_Complete_v11_final_logic', JSON.stringify(scenarios));
+                localStorage.setItem('retirementScenarios_Complete_v12_final', JSON.stringify(scenarios));
             }, [scenarios]);
 
             const activeScenario = scenarios.find(s => s.id === activeScenarioId) || scenarios[0];
@@ -272,13 +272,32 @@
                     const oneTimeExpense = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'expense' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
                     const targetNetWithdrawal = totalRecurringExpense + oneTimeExpense;
                     
-                    // --- Step 3: Hierarchical Withdrawal Logic ---
+                    // --- Step 3: SOLVENCY CHECK ---
+                    const totalAssets = startBalances.rrsp + startBalances.tfsa + startBalances.nonReg;
+                    const totalIncome = recurringIncome + oneTimeIncome;
+                    if (totalAssets + totalIncome < targetNetWithdrawal) {
+                        fundsDepleted = true;
+                        if (fundDepletionYear > endYear) fundDepletionYear = currentYear;
+
+                        const finalWithdrawals = { ...startBalances };
+                        const grossWithdrawal = totalAssets;
+                        const taxableIncome = totalIncome + finalWithdrawals.rrsp + (finalWithdrawals.nonReg * (settings.nonRegGainAssumption / 100) * 0.5);
+                        const taxPaid = calculateTax(taxableIncome, currentYear, startYear, settings.taxInflationRate);
+
+                        const dataToPush = { year: currentYear, age, totalEndBalance: 0, rrspStartBalance: startBalances.rrsp, tfsaStartBalance: startBalances.tfsa, nonRegStartBalance: startBalances.nonReg, targetNetWithdrawal, recurringIncome, oneTimeIncome, grossWithdrawal, taxPaid, taxableIncome, taxableWithdrawals: { rrsp: finalWithdrawals.rrsp, nonReg: finalWithdrawals.nonReg * (settings.nonRegGainAssumption / 100) * 0.5 }, finalWithdrawals, optimizationAttempts: [{ strategyName: 'Liquidation', cost: grossWithdrawal, isOptimal: true }] };
+                        
+                        yearlyData.push(dataToPush);
+                        balances = { rrsp: 0, tfsa: 0, nonReg: 0 }; // Ensure next year starts at 0
+                        continue; // Skip to next year
+                    }
+
+                    // --- Step 4: Hierarchical Withdrawal Logic ---
                     let finalWithdrawals = { rrsp: 0, tfsa: 0, nonReg: 0 };
                     let taxableIncome = recurringIncome + oneTimeIncome;
                     let netCashAvailable = taxableIncome - calculateTax(taxableIncome, currentYear, startYear, settings.taxInflationRate);
                     let remainingNetNeed = targetNetWithdrawal - netCashAvailable;
 
-                    // 3a: Mandatory RRIF Withdrawal
+                    // 4a: Mandatory RRIF Withdrawal
                     const rrifMin = startBalances.rrsp * getRrifMinRate(age);
                     if (rrifMin > 0) {
                         finalWithdrawals.rrsp += rrifMin;
@@ -287,7 +306,7 @@
                         remainingNetNeed = targetNetWithdrawal - netCashAvailable;
                     }
 
-                    // 3b: Micro-Melt with BPA
+                    // 4b: Micro-Melt with BPA
                     if (remainingNetNeed > 0) {
                         const inflationFactor = Math.pow(1 + settings.taxInflationRate / 100, currentYear - startYear);
                         const fedBPA = 16129 * inflationFactor;
@@ -302,14 +321,14 @@
                         }
                     }
 
-                    // 3c: Optimize for any remaining need
+                    // 4c: Optimize for any remaining need
                     let bestAttempt = { cost: Infinity, priority: Infinity, finalWithdrawals: finalWithdrawals, taxPaid: calculateTax(taxableIncome, currentYear, startYear, settings.taxInflationRate) };
                     const optimizationAttempts = [];
 
                     if (remainingNetNeed > 0) {
                         const strategies = [
-                            { name: 'TFSA -> Non-Reg -> RRSP', order: ['tfsa', 'nonReg', 'rrsp'], priority: 2 },
-                            { name: 'Non-Reg -> TFSA -> RRSP', order: ['nonReg', 'tfsa', 'rrsp'], priority: 1 }
+                            { name: 'TFSA -> Non-Reg -> RRSP', order: ['tfsa', 'nonReg', 'rrsp'], priority: 1 },
+                            { name: 'Non-Reg -> TFSA -> RRSP', order: ['nonReg', 'tfsa', 'rrsp'], priority: 0 }
                         ];
 
                         for (const s of strategies) {
@@ -376,19 +395,6 @@
                     let finalTaxableIncome = recurringIncome + oneTimeIncome + finalWithdrawals.rrsp + (finalWithdrawals.nonReg * (settings.nonRegGainAssumption / 100) * 0.5);
                     let finalTaxPaid = calculateTax(finalTaxableIncome, currentYear, startYear, settings.taxInflationRate);
                     let grossWithdrawal = finalWithdrawals.rrsp + finalWithdrawals.tfsa + finalWithdrawals.nonReg;
-
-                    if (grossWithdrawal > (startBalances.rrsp + startBalances.tfsa + startBalances.nonReg)) {
-                        fundsDepleted = true;
-                    }
-                    
-                    if (fundsDepleted) {
-                        if(fundDepletionYear > endYear) fundDepletionYear = currentYear;
-                        balances = { rrsp: 0, tfsa: 0, nonReg: 0 };
-                        finalWithdrawals = {rrsp:0, tfsa:0, nonReg:0};
-                        grossWithdrawal = 0;
-                        finalTaxPaid = 0;
-                        finalTaxableIncome = 0;
-                    }
                     
                     if (!isMonteCarloRun) {
                         const optimalAttempt = optimizationAttempts.find(a => a.strategyName === bestAttempt.strategyName);
@@ -407,18 +413,7 @@
                     balances.tfsa *= growthRate; 
                     balances.nonReg *= growthRate;
 
-                    if (settings.volatilityMode === 'discrete' && !isMonteCarloRun) {
-                        (marketCrashes || []).forEach(crash => {
-                            const crashStartYear = getParsedValue(crash.startYear); const duration = getParsedValue(crash.duration);
-                            if (duration > 0 && currentYear >= crashStartYear && currentYear < crashStartYear + duration) {
-                                const annualMultiplier = Math.pow(1 + (-Math.abs(getParsedValue(crash.totalDecline)) / 100), 1 / duration);
-                                balances.rrsp *= annualMultiplier; balances.tfsa *= annualMultiplier; balances.nonReg *= annualMultiplier;
-                            }
-                        });
-                    }
-
                     const totalEndBalance = balances.rrsp + balances.tfsa + balances.nonReg;
-                    if (totalEndBalance <= 0 && fundDepletionYear > endYear) { fundDepletionYear = currentYear; }
                     
                     // --- Record data ---
                     const dataToPush = { year: currentYear, age, totalEndBalance: Math.max(0, totalEndBalance) };
