@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Retirement Planner (Optimization & Monte Carlo Engine)</title>
+    <meta name="theme-color" content="#111827"/>
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- External Libraries -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://unpkg.com/heroicons@1.0.6/dist/solid.min.css" rel="stylesheet">
+    
+    <!-- Styling -->
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #111827; color: #f9fafb; scroll-behavior: smooth; }
+        .loader {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
+        .tooltip { position: relative; display: inline-flex; align-items: center; }
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 250px;
+            background-color: #1f2937;
+            color: #fff;
+            text-align: left;
+            border-radius: 6px;
+            padding: 8px;
+            position: absolute;
+            z-index: 10;
+            bottom: 150%;
+            left: 50%;
+            margin-left: -125px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            border: 1px solid #374151;
+        }
+        .tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
+        select {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%239CA3AF%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E');
+            background-repeat: no-repeat;
+            background-position: right 0.7rem center;
+            background-size: 0.65rem auto;
+            padding-right: 2.5rem;
+        }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+        
+        // --- Utility Functions ---
+        const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
+        const TODAY_YEAR = new Date().getFullYear();
+        const formatCurrency = (amount, digits = 0) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: digits, maximumFractionDigits: digits }).format(amount);
+        const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
+        // Box-Muller transform to generate normally distributed random numbers
+        const generateNormalRandom = (mean, stddev) => {
+            let u1 = 0, u2 = 0;
+            while(u1 === 0) u1 = Math.random();
+            while(u2 === 0) u2 = Math.random();
+            const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+            return z0 * stddev + mean;
+        };
+
+        // --- New Scenario Creator (with Monte Carlo settings) ---
+        const createNewScenario = (name) => ({
+            id: new Date().getTime(),
+            name: name,
+            settings: {
+                birthYear: 1981,
+                startYear: 2031,
+                endYear: 2081,
+                rrspBalance: 1000000,
+                tfsaBalance: 500000,
+                nonRegisteredBalance: 2000000,
+                investmentReturn: 7, // For discrete simulation
+                nonRegGainAssumption: 50, 
+                taxInflationRate: 2.5,
+                // --- Monte Carlo Settings ---
+                volatilityMode: 'discrete', // 'discrete' or 'auto'
+                portfolioComposition: { growth: 60, dividend: 20, bond: 20 },
+                annualMedianReturn: 7, // For Monte Carlo
+                volatility: 15, // For Monte Carlo
+                simulationCount: 5000,
+            },
+            expenses: [
+                { id: 1, name: 'Living Expenses', amount: 20000, startYear: 2031, growthRate: 3 },
+                { id: 2, name: 'Insurance', amount: 5000, startYear: 2031, growthRate: 3 },
+                { id: 3, name: 'Travel', amount: 10000, startYear: 2031, growthRate: 3 },
+            ],
+            incomes: [
+                 { id: 1, name: 'Other Pension', amount: 2000, startYear: 2041, growthRate: 3 },
+                 { id: 2, name: 'CPP', amount: 2500, startYear: 2046, growthRate: 3 },
+                 { id: 3, name: 'OAS', amount: 1000, startYear: 2046, growthRate: 3 },
+            ],
+            oneTimeEvents: [
+                 { id: 1, name: 'Medical Bill', type: 'expense', amount: 30000, year: 2061 },
+            ],
+            marketCrashes: [],
+        });
+
+        // --- Components ---
+        const Tooltip = ({ text }) => (
+            <div className="tooltip ml-1">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                </svg>
+                <span className="tooltiptext">{text}</span>
+            </div>
+        );
+        
+        const ExplanationAccordion = () => {
+            const [isOpen, setIsOpen] = useState(false);
+            return (
+                <div className="bg-gray-800 border border-gray-700 rounded-xl mb-6">
+                    <button onClick={() => setIsOpen(!isOpen)} className="w-full p-4 text-left font-semibold text-lg flex justify-between items-center">
+                        <span>How does this calculator work?</span>
+                        <svg className={`w-6 h-6 transition-transform transform ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </button>
+                    {isOpen && (
+                        <div className="p-4 border-t border-gray-700 text-gray-300 space-y-4">
+                            <p>This tool offers two core functions: <strong>Optimization</strong> (scenario comparison) and <strong>Validation</strong> (Monte Carlo testing).</p>
+                            <div>
+                                <h4 className="font-semibold text-gray-200">Optimization Example: How to withdraw $35,001 and pay $0 in tax</h4>
+                                <p>When you need $35,001 for living expenses, the optimization engine finds the best withdrawal mix to minimize taxes:</p>
+                                <ol className="list-decimal list-inside mt-1 space-y-1">
+                                     <li>Withdraw <strong>$3,500 (10%) from RRSP</strong> (Taxable income: $3,500)</li>
+                                     <li>Withdraw <strong>$31,501 (90%) from Non-Registered</strong> (Only the capital gains portion, e.g., $7,875, is taxable)</li>
+                                     <li><strong>Total Taxable Income:</strong> $3,500 (RRSP) + $7,875 (Non-Reg Gain) = $11,375</li>
+                                     <li><strong>Conclusion:</strong> This total is below Canada's Basic Personal Amount (approx. $16,129), so the final tax is <strong>$0</strong>.</li>
+                                </ol>
+                            </div>
+                             <div>
+                                <h4 className="font-semibold text-gray-200">Validation: Monte Carlo Simulation</h4>
+                                <p>Instead of a fixed return rate, this simulates thousands of random market scenarios based on your 'Median Return' and 'Volatility' settings. It shows the <strong>probability of success</strong>, indicating how robust your plan is against market fluctuations.</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const DataEntryTab = ({ items, setItems, fields, birthYear }) => {
+            const handleItemChange = (id, field, value) => { setItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item)); };
+            const handleAddItem = () => { const newItem = { id: new Date().getTime() }; fields.forEach(field => newItem[field.key] = field.defaultValue); setItems(prev => [...(prev || []), newItem]); };
+            const handleRemoveItem = (id) => { setItems(prev => prev.filter(item => item.id !== id)); };
+            
+            return (
+                <div className="space-y-4">
+                    {(items || []).map(item => {
+                        const yearFieldKey = item.hasOwnProperty('startYear') ? 'startYear' : 'year';
+                        const itemYear = item[yearFieldKey];
+                        const ageAtEvent = (birthYear && itemYear && String(itemYear).length === 4) ? parseInt(itemYear, 10) - parseInt(birthYear, 10) : null;
+                        
+                        return (
+                            <div key={item.id} className="p-4 bg-gray-900/50 rounded-lg border border-gray-700">
+                                <div className="grid grid-cols-12 gap-x-4 items-start"> {/* Changed to items-start for top alignment */}
+                                    {/* All fields are rendered in a single grid container. They will wrap based on their col-span classes. */}
+                                    {fields.map(field => (
+                                        <div key={field.key} className={`col-span-12 ${field.className}`}>
+                                            <label className="text-xs text-gray-400 flex items-center">{field.label}{field.tooltip && <Tooltip text={field.tooltip} />}</label>
+                                            {field.type === 'select' ? (
+                                                <select value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
+                                                    {field.options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                                </select>
+                                            ) : (
+                                                <input type={field.type || 'text'} value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md" placeholder={field.placeholder || ''} step={field.step || 'any'} />
+                                            )}
+                                            { (field.key === 'startYear' || field.key === 'year') && ageAtEvent !== null && ageAtEvent >= 0 && (
+                                                <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">(Age: {ageAtEvent})</div>
+                                            )}
+                                        </div>
+                                    ))}
+                                    {/* The single delete button, aligned to the top with padding to match input fields */}
+                                    <div className="col-span-1 self-start pt-6"> 
+                                        <button onClick={() => handleRemoveItem(item.id)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                    <button onClick={handleAddItem} className="w-full mt-4 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg> Add Item
+                    </button>
+                </div>
+            );
+        };
+        
+        const VolatilityTab = ({ scenario, updateScenario, runMonteCarloTest, isCalculatingMC, clearMCResults, marketCrashFields }) => { const { settings } = scenario; const handleModeChange = (mode) => { updateScenario(s => ({ ...s, settings: { ...s.settings, volatilityMode: mode } })); clearMCResults(); }; const handlePortfolioChange = (type, value) => { const newPortfolio = { ...settings.portfolioComposition, [type]: getParsedValue(value) }; updateScenario(s => ({ ...s, settings: { ...s.settings, portfolioComposition: newPortfolio } })); }; const handleSettingChange = (key, value) => { updateScenario(s => ({ ...s, settings: { ...s.settings, [key]: value } })); }; const recommendedValues = useMemo(() => { const { growth, dividend, bond } = settings.portfolioComposition; const total = getParsedValue(growth) + getParsedValue(dividend) + getParsedValue(bond); if (total === 0) return { return: 0, volatility: 0 }; const assetProfiles = { growth: { return: 9.5, volatility: 22 }, dividend: { return: 6.0, volatility: 15 }, bond: { return: 3.5, volatility: 7 } }; const recommendedReturn = ((growth * assetProfiles.growth.return + dividend * assetProfiles.dividend.return + bond * assetProfiles.bond.return) / total).toFixed(1); const recommendedVolatility = ((growth * assetProfiles.growth.volatility + dividend * assetProfiles.dividend.volatility + bond * assetProfiles.bond.volatility) / total).toFixed(1); return { return: recommendedReturn, volatility: recommendedVolatility }; }, [settings.portfolioComposition]); return ( <div className="space-y-6"> <div> <label className="text-sm font-medium text-gray-300 mb-2 block">Volatility Mode</label> <div className="flex space-x-2 rounded-lg bg-gray-900/50 p-1 border border-gray-700"> <button onClick={() => handleModeChange('discrete')} className={`w-full py-2 text-sm font-semibold rounded-md transition-colors ${settings.volatilityMode === 'discrete' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}>Discrete Event Mode</button> <button onClick={() => handleModeChange('auto')} className={`w-full py-2 text-sm font-semibold rounded-md transition-colors ${settings.volatilityMode === 'auto' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-700'}`}>Auto Mode (Monte Carlo)</button> </div> </div> {settings.volatilityMode === 'auto' ? ( <div className="p-4 bg-gray-900/50 rounded-lg border border-gray-700 space-y-4"> <h4 className="text-lg font-semibold text-gray-300">Auto Mode Settings</h4> <div> <label className="text-sm font-medium text-gray-300 mb-1 block">Portfolio Composition (%)</label> <div className="grid grid-cols-3 gap-4"> <div><label className="text-xs text-gray-400">Growth</label><input type="number" step="10" min="0" max="100" value={settings.portfolioComposition.growth} onChange={e => handlePortfolioChange('growth', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div> <div><label className="text-xs text-gray-400">Dividend</label><input type="number" step="10" min="0" max="100" value={settings.portfolioComposition.dividend} onChange={e => handlePortfolioChange('dividend', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div> <div><label className="text-xs text-gray-400">Bond</label><input type="number" step="10" min="0" max="100" value={settings.portfolioComposition.bond} onChange={e => handlePortfolioChange('bond', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div> </div> </div> <div className="grid grid-cols-1 md:grid-cols-2 gap-4"> <div> <label className="text-sm font-medium text-gray-300 mb-1 block">Annual Median Return (%)</label> <input type="number" step="0.1" value={settings.annualMedianReturn} onChange={e => handleSettingChange('annualMedianReturn', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/> <p className="text-xs text-gray-400 mt-1">Recommended: {recommendedValues.return}%</p> </div> <div> <label className="text-sm font-medium text-gray-300 mb-1 block">Volatility (Std. Dev., %)</label> <input type="number" step="0.1" value={settings.volatility} onChange={e => handleSettingChange('volatility', e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/> <p className="text-xs text-gray-400 mt-1">Recommended: {recommendedValues.volatility}%</p> </div> </div> <div> <label className="text-sm font-medium text-gray-300 mb-1 block">Number of Simulations</label> <select value={settings.simulationCount} onChange={e => handleSettingChange('simulationCount', Number(e.target.value))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md" > <option value="1000">1,000 (Fast, ~10s)</option> <option value="5000">5,000 (Standard, ~50s)</option> <option value="10000">10,000 (Precise, ~100s)</option> </select> </div> <button onClick={runMonteCarloTest} disabled={isCalculatingMC} className="w-full mt-2 py-2 px-4 bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:cursor-not-allowed text-white font-bold rounded-md flex items-center justify-center"> {isCalculatingMC ? <><div className="loader mr-3"></div><span>{`Calculating (${settings.simulationCount.toLocaleString()} runs)...`}</span></> : 'Run Monte Carlo Test'} </button> </div> ) : ( <DataEntryTab items={scenario.marketCrashes} setItems={(updater) => updateScenario(s => ({...s, marketCrashes: updater(s.marketCrashes)}))} fields={marketCrashFields} birthYear={settings.birthYear} /> )} </div> ); };
+        
+        const MonteCarloResults = ({ results }) => { const chartRef = useRef(null); const chartInstanceRef = useRef(null); useEffect(() => { if (!results || !results.processedPlotData || !chartRef.current) return; if (chartInstanceRef.current) chartInstanceRef.current.destroy(); const { processedPlotData, startYear, endYear } = results; const labels = Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i); const datasets = [ { label: 'Median (50th percentile)', data: processedPlotData.p50, borderColor: '#34D399', borderWidth: 2, pointRadius: 0, tension: 0.1 }, { label: 'Pessimistic (10th percentile)', data: processedPlotData.p10, borderColor: 'rgba(248, 113, 113, 0.5)', borderWidth: 1, pointRadius: 0, borderDash: [5, 5], tension: 0.1 }, { label: 'Optimistic (90th percentile)', data: processedPlotData.p90, borderColor: 'rgba(56, 189, 248, 0.5)', backgroundColor: 'rgba(56, 189, 248, 0.1)', borderWidth: 1, pointRadius: 0, borderDash: [5, 5], tension: 0.1, fill: '-1' } ]; const ctx = chartRef.current.getContext('2d'); chartInstanceRef.current = new Chart(ctx, { type: 'line', data: { labels, datasets }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#D1D5DB' } }, tooltip: { mode: 'index', intersect: false, callbacks: { label: function(context) { let label = context.dataset.label || ''; if (label) { label += ': '; } if (context.parsed.y !== null) { label += formatCurrency(context.parsed.y); } return label; } } } }, scales: { y: { ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000000) + 'M' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }, x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } } } } }); }, [results]); if (!results) return null; return ( <div className="bg-gray-900/50 p-6 rounded-xl shadow-lg border border-gray-700 mt-6"> <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">Monte Carlo Test Results</h2> <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-center mb-6"> <div className="p-4 rounded-lg bg-green-900/50"> <div className="text-sm font-semibold text-green-400">Success Rate</div> <div className="text-3xl font-bold text-gray-200">{results.successRate.toFixed(1)}%</div> <div className="text-xs text-gray-400">({results.successCount.toLocaleString()} / {results.simulationCount.toLocaleString()} successful runs)</div> </div> <div className="p-4 rounded-lg bg-gray-800 border border-gray-700"> <div className="text-sm font-semibold text-gray-400 mb-2">Final Year Asset Balance</div> <div className="text-sm text-left space-y-1"> <p><span className="font-semibold text-sky-400">Optimistic (Top 10%):</span> {formatCurrency(results.finalBalances.p90)}</p> <p><span className="font-semibold text-gray-300">Median (50%):</span> {formatCurrency(results.finalBalances.p50)}</p> <p><span className="font-semibold text-red-400">Pessimistic (Bottom 10%):</span> {formatCurrency(results.finalBalances.p10)}</p> </div> </div> </div> <div> <h3 className="text-lg font-semibold text-center mb-2">Projected Asset Range</h3> <div className="relative h-96"><canvas ref={chartRef}></canvas></div> </div> </div> ) };
+        
+        const ComparisonResults = ({ scenarios, simulationResults }) => {
+            const chartRef = useRef(null);
+            const chartInstanceRef = useRef(null);
+
+            const filteredSimulationResults = useMemo(() => {
+                if (!simulationResults) return [];
+                return simulationResults.map(result => {
+                    const depletionIndex = result.yearlyData.findIndex(data => data.totalEndBalance <= 0);
+                    if (depletionIndex > 0) {
+                        return {
+                            ...result,
+                            yearlyData: result.yearlyData.slice(0, depletionIndex + 1)
+                        };
+                    }
+                    return result;
+                });
+            }, [simulationResults]);
+
+            const [selectedTableScenarioId, setSelectedTableScenarioId] = useState(scenarios.length > 0 ? scenarios[0].id : 'none');
+            const colors = ['#34D399', '#F472B6', '#FBBF24'];
+            const pointStyles = ['circle', 'triangle', 'star'];
+            const shapeIcons = ['●', '▲', '★'];
+            
+            // *** NEW FEATURE: CSV EXPORT FUNCTION ***
+            const exportToCSV = () => {
+                const resultToExport = filteredSimulationResults.find((r, i) => scenarios[i].id === Number(selectedTableScenarioId));
+                if (!resultToExport) {
+                    alert('Please select a scenario from the dropdown to export.');
+                    return;
+                }
+                const scenarioName = scenarios.find(s => s.id === Number(selectedTableScenarioId))?.name || 'export';
+                const headers = ['Year', 'Age', 'Optimal_Ratio_RRSP(%)', 'Optimal_Ratio_TFSA(%)', 'Optimal_Ratio_NonReg(%)', 'Gross_Withdrawal', 'Tax_Paid', 'Ending_Balance'];
+                const rows = resultToExport.yearlyData.map(d => [
+                    d.year,
+                    d.age,
+                    d.optimalRatio ? d.optimalRatio.rrsp : 'N/A',
+                    d.optimalRatio ? d.optimalRatio.tfsa : 'N/A',
+                    d.optimalRatio ? d.optimalRatio.nonReg : 'N/A',
+                    d.grossWithdrawal,
+                    d.taxPaid,
+                    d.totalEndBalance
+                ].join(','));
+
+                const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows].join('\n');
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `${scenarioName.replace(/ /g, '_')}_data.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+
+            useEffect(() => {
+                if (!filteredSimulationResults || filteredSimulationResults.length === 0 || !chartRef.current) return;
+                if (chartInstanceRef.current) chartInstanceRef.current.destroy();
+                
+                const allYears = filteredSimulationResults.flatMap(r => r.yearlyData.map(d => d.year));
+                if (allYears.length === 0) return;
+
+                const minYear = Math.min(...allYears);
+                const maxYear = Math.max(...allYears);
+                const labels = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
+                
+                const datasets = filteredSimulationResults.map((result, index) => {
+                    const scenario = scenarios[index];
+                    const dataMap = new Map(result.yearlyData.map(d => [d.year, d.totalEndBalance]));
+                    const chartData = labels.map(year => dataMap.has(year) ? dataMap.get(year) : null);
+                    return {
+                        label: scenario.name,
+                        data: chartData,
+                        borderColor: colors[index % colors.length],
+                        backgroundColor: colors[index % colors.length] + '33',
+                        fill: true,
+                        tension: 0.3,
+                        spanGaps: true,
+                        pointStyle: pointStyles[index % pointStyles.length],
+                        pointRadius: 5,
+                        pointHoverRadius: 7,
+                    };
+                });
+                const ctx = chartRef.current.getContext('2d');
+                chartInstanceRef.current = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels, datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: { labels: { color: '#D1D5DB', usePointStyle: true } },
+                            tooltip: {
+                                callbacks: {
+                                    title: (tooltipItems) => tooltipItems.length > 0 ? `Year: ${tooltipItems[0].label}` : '',
+                                    label: (context) => {
+                                        let label = context.dataset.label || '';
+                                        if (label) label += ': ';
+                                        if (context.parsed.y !== null) label += formatCurrency(context.parsed.y);
+                                        const year = parseInt(context.label, 10);
+                                        const scenarioIndex = context.datasetIndex;
+                                        if (scenarios[scenarioIndex]) {
+                                            const birthYear = scenarios[scenarioIndex].settings.birthYear;
+                                            label += ` (Age: ${year - birthYear})`;
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            y: { ticks: { color: '#9CA3AF', callback: (v) => '$' + (v / 1000000) + 'M' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+                            x: { ticks: { color: '#9CA3AF' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+                        }
+                    }
+                });
+            }, [scenarios, filteredSimulationResults]); 
+
+            const selectedResult = filteredSimulationResults.find((r, i) => scenarios[i].id === Number(selectedTableScenarioId));
+            
+            if (!simulationResults || simulationResults.length === 0) return null;
+            
+            return (
+                <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 mt-6">
+                    <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">Scenario Comparison Results</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center mb-6">
+                        {simulationResults.map((result, index) => {
+                            const scenario = scenarios[index];
+                            const age = result.fundDepletionYear > scenario.settings.endYear ? null : result.fundDepletionYear - scenario.settings.birthYear;
+                            const depletionText = age ? `${result.fundDepletionYear} (Age ${age})` : 'Sustained';
+                            return (
+                                <div key={scenario.id} className="p-3 rounded-lg" style={{backgroundColor: colors[index % colors.length] + '22'}}>
+                                    <div className="text-sm font-semibold flex items-center justify-center" style={{color: colors[index % colors.length]}}>
+                                        <span className="mr-2 text-lg">{shapeIcons[index % shapeIcons.length]}</span>
+                                        {scenario.name}
+                                    </div>
+                                    <div className="text-lg font-bold text-gray-200">{depletionText}</div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="relative h-96"><canvas ref={chartRef}></canvas></div>
+                    <div className="mt-6">
+                        {/* --- MODIFIED: Added Export Button --- */}
+                        <div className="flex flex-col sm:flex-row gap-2">
+                            <div className="flex-grow">
+                                <label htmlFor="table-select" className="block text-sm font-medium text-gray-300 mb-2">View Detailed Data:</label>
+                                <select id="table-select" value={selectedTableScenarioId} onChange={e => setSelectedTableScenarioId(e.target.value)} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
+                                    <option value="none">Hide Table</option>
+                                    {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                </select>
+                            </div>
+                            <div className="self-end">
+                                <button onClick={exportToCSV} disabled={selectedTableScenarioId === 'none'} className="w-full sm:w-auto mt-2 sm:mt-0 py-2 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-md flex items-center justify-center">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                                    </svg>
+                                    Export to CSV
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {selectedResult && (
+                        <div className="mt-4 max-h-96 overflow-y-auto">
+                            <table className="w-full text-sm text-left text-gray-400">
+                                <thead className="text-xs text-gray-300 uppercase bg-gray-700/50 sticky top-0">
+                                    <tr>
+                                        <th scope="col" className="px-4 py-3">Year (Age)</th>
+                                        <th scope="col" className="px-4 py-3">Optimal Ratio (R/T/N)</th>
+                                        <th scope="col" className="px-4 py-3">Gross Withdrawal</th>
+                                        <th scope="col" className="px-4 py-3">Tax Paid</th>
+                                        <th scope="col" className="px-4 py-3">End Balance</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {selectedResult.yearlyData.map(data => (
+                                        <tr key={data.year} className="border-b border-gray-700 hover:bg-gray-700/30">
+                                            <td className="px-4 py-2">{data.year} ({data.age})</td>
+                                            <td className="px-4 py-2 font-mono">{data.optimalRatio ? `${data.optimalRatio.rrsp}/${data.optimalRatio.tfsa}/${data.optimalRatio.nonReg}` : 'N/A'}</td>
+                                            <td className="px-4 py-2">{formatCurrency(data.grossWithdrawal)}</td>
+                                            <td className="px-4 py-2">{formatCurrency(data.taxPaid)}</td>
+                                            <td className="px-4 py-2">{formatCurrency(data.totalEndBalance)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+        
+        const VerificationDashboard = ({ simulationResults, scenarios }) => {
+            const [selectedScenarioId, setSelectedScenarioId] = useState(scenarios.length > 0 ? scenarios[0].id : null);
+            const [selectedYear, setSelectedYear] = useState(null);
+            const selectedResult = useMemo(() => {
+                return simulationResults.find((r, i) => scenarios[i].id === Number(selectedScenarioId));
+            }, [selectedScenarioId, simulationResults, scenarios]);
+
+            useEffect(() => {
+                if (selectedResult && selectedResult.yearlyData.length > 0) {
+                    const targetYear = selectedResult.yearlyData.find(d => d.age === 80)?.year;
+                    setSelectedYear(targetYear || selectedResult.yearlyData[0].year);
+                } else {
+                    setSelectedYear(null);
+                }
+            }, [selectedResult]);
+
+            if (!selectedResult) return null;
+
+            const yearData = selectedResult.yearlyData.find(d => d.year === selectedYear);
+            const prevYearData = selectedResult.yearlyData.find(d => d.year === selectedYear - 1);
+            const nextYearData = selectedResult.yearlyData.find(d => d.year === selectedYear + 1);
+
+            const displayData = (data, field) => {
+                if (!data) return 'N/A';
+                if (field === 'balance') {
+                    return `${formatCurrency(data.rrspStartBalance)} / ${formatCurrency(data.tfsaStartBalance)} / ${formatCurrency(data.nonRegStartBalance)}`;
+                }
+                return formatCurrency(data[field]);
+            };
+
+            const displayRatio = (data) => data && data.optimalRatio ? `${data.optimalRatio.rrsp}% / ${data.optimalRatio.tfsa}% / ${data.optimalRatio.nonReg}%` : 'N/A';
+
+            return (
+                <div className="bg-gray-900/50 p-6 rounded-xl shadow-lg border border-gray-700 mt-6">
+                    <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">⚙️ Optimization Engine Dashboard (Verification)</h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <div>
+                            <label className="text-sm font-medium text-gray-300 mb-1 block">Select Scenario:</label>
+                            <select value={selectedScenarioId || ''} onChange={e => setSelectedScenarioId(e.target.value)} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
+                                {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-sm font-medium text-gray-300 mb-1 block">Select Year to Verify:</label>
+                            <select value={selectedYear || ''} onChange={e => setSelectedYear(Number(e.target.value))} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
+                                {selectedResult.yearlyData.map(d => <option key={d.year} value={d.year}>{d.year} (Age {d.age})</option>)}
+                            </select>
+                        </div>
+                    </div>
+                    {yearData && (
+                    <div>
+                        <h3 className="text-lg font-semibold text-gray-300 mb-2">Year-over-Year Comparison</h3>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left text-gray-400">
+                                <thead className="text-xs text-gray-300 uppercase bg-gray-700/50">
+                                    <tr>
+                                        <th className="px-4 py-2">Metric</th>
+                                        <th className="px-4 py-2">{selectedYear - 1} (Age {yearData.age - 1})</th>
+                                        <th className="px-4 py-2 bg-blue-900/50">{selectedYear} (Age {yearData.age})</th>
+                                        <th className="px-4 py-2">{selectedYear + 1} (Age {yearData.age + 1})</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Start Balance (R/T/N)</td><td className="px-4 py-2 font-mono">{displayData(prevYearData, 'balance')}</td><td className="px-4 py-2 font-mono bg-blue-900/30">{displayData(yearData, 'balance')}</td><td className="px-4 py-2 font-mono">{displayData(nextYearData, 'balance')}</td></tr>
+                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Target Net Withdrawal</td><td className="px-4 py-2">{displayData(prevYearData, 'targetNetWithdrawal')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'targetNetWithdrawal')}</td><td className="px-4 py-2">{displayData(nextYearData, 'targetNetWithdrawal')}</td></tr>
+                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Optimal Ratio (R/T/N)</td><td className="px-4 py-2 font-mono">{displayRatio(prevYearData)}</td><td className="px-4 py-2 font-mono bg-blue-900/30">{displayRatio(yearData)}</td><td className="px-4 py-2 font-mono">{displayRatio(nextYearData)}</td></tr>
+                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Gross Withdrawal</td><td className="px-4 py-2">{displayData(prevYearData, 'grossWithdrawal')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'grossWithdrawal')}</td><td className="px-4 py-2">{displayData(nextYearData, 'grossWithdrawal')}</td></tr>
+                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Tax Paid</td><td className="px-4 py-2">{displayData(prevYearData, 'taxPaid')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'taxPaid')}</td><td className="px-4 py-2">{displayData(nextYearData, 'taxPaid')}</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-300 mt-6 mb-2">Formulas & Calculations for {selectedYear}</h3>
+                        <div className="p-4 bg-gray-900 rounded-lg space-y-2 text-sm font-mono border border-gray-700">
+                            <p><span className="text-green-400">Taxable Income:</span> {formatCurrency(yearData.taxableIncome)} = {formatCurrency(yearData.recurringIncome)} (Recur Inc) + {formatCurrency(yearData.oneTimeIncome)} (One-Time Inc) + {formatCurrency(yearData.taxableWithdrawals.rrsp)} (RRSP) + {formatCurrency(yearData.taxableWithdrawals.nonReg)} (Non-Reg Gain)</p>
+                            <p><span className="text-yellow-400">Tax Paid:</span> {formatCurrency(yearData.taxPaid)} = Fed_Tax({formatCurrency(yearData.taxableIncome)}) + Prov_Tax({formatCurrency(yearData.taxableIncome)}) - Credits</p>
+                            <p><span className="text-cyan-400">Net Outflow:</span> {formatCurrency(yearData.targetNetWithdrawal)} (Spending) + {formatCurrency(yearData.taxPaid)} (Tax) = {formatCurrency(yearData.targetNetWithdrawal + yearData.taxPaid)}</p>
+                            <p><span className="text-cyan-400">Gross Withdrawal:</span> {formatCurrency(yearData.grossWithdrawal)} ≈ Net Outflow</p>
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-300 mt-6 mb-2">Optimization Test Results for {selectedYear} (66 Combinations)</h3>
+                        <div className="max-h-80 overflow-y-auto">
+                            <table className="w-full text-xs text-left text-gray-400">
+                                <thead className="text-gray-300 uppercase bg-gray-700/50 sticky top-0">
+                                    <tr>
+                                        <th className="px-2 py-2">Ratio (R/T/N)</th>
+                                        <th className="px-2 py-2">Cost (Gross Withdrawal)</th>
+                                        <th className="px-2 py-2">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="font-mono">
+                                    {yearData.optimizationAttempts.map((attempt, i) => (
+                                        <tr key={i} className={`border-b border-gray-800 ${attempt.status === 'Optimal' ? 'bg-green-800/50 text-white' : attempt.status === 'Failed' ? 'bg-red-800/30 text-gray-500' : ''}`}>
+                                            <td className="px-2 py-1">{attempt.ratio.rrsp}/{attempt.ratio.tfsa}/{attempt.ratio.nonReg}</td>
+                                            <td className="px-2 py-1">{attempt.cost === Infinity ? 'N/A' : formatCurrency(attempt.cost)}</td>
+                                            <td className="px-2 py-1">{attempt.status}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- Main App Component ---
+        const App = () => {
+            const [scenarios, setScenarios] = useState(() => {
+                const saved = localStorage.getItem('retirementScenarios_Complete_v4_final');
+                return saved ? JSON.parse(saved) : [createNewScenario('My Scenario')];
+            });
+            const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
+            const [activeDataTab, setActiveDataTab] = useState('settings');
+            const [comparisonResults, setComparisonResults] = useState([]);
+            const [monteCarloResults, setMonteCarloResults] = useState(null);
+            const [isCalculating, setIsCalculating] = useState(false);
+            const [isCalculatingMC, setIsCalculatingMC] = useState(false);
+            const resultsRef = useRef(null);
+
+            useEffect(() => {
+                localStorage.setItem('retirementScenarios_Complete_v4_final', JSON.stringify(scenarios));
+            }, [scenarios]);
+
+            const activeScenario = scenarios.find(s => s.id === activeScenarioId) || scenarios[0];
+            
+            const updateActiveScenario = (updater) => {
+                setScenarios(prev => prev.map(s => s.id === activeScenarioId ? updater(s) : s));
+            };
+            
+            const handleAddScenario = () => { if (scenarios.length < 3) { const newScenario = createNewScenario(`Scenario ${scenarios.length + 1}`); setScenarios(prev => [...prev, newScenario]); setActiveScenarioId(newScenario.id); } };
+            const handleCopyScenario = () => { if (scenarios.length < 3) { const scenarioToCopy = scenarios.find(s => s.id === activeScenarioId); const newScenario = deepCopy(scenarioToCopy); newScenario.id = new Date().getTime(); newScenario.name = `${scenarioToCopy.name} (Copy)`; setScenarios(prev => [...prev, newScenario]); setActiveScenarioId(newScenario.id); } };
+            const handleRemoveScenario = () => { if (scenarios.length > 1) { const newScenarios = scenarios.filter(s => s.id !== activeScenarioId); setScenarios(newScenarios); setActiveScenarioId(newScenarios[0].id); } };
+
+            const calculateTax = (taxableIncome, year, startYear, taxInflationRate) => {
+                const inflationFactor = Math.pow(1 + taxInflationRate / 100, year - startYear);
+                const fedBrackets = [ { limit: 57375 * inflationFactor, rate: 0.15 }, { limit: 114750 * inflationFactor, rate: 0.205 }, { limit: 177882 * inflationFactor, rate: 0.26 }, { limit: 253414 * inflationFactor, rate: 0.29 }, { limit: Infinity, rate: 0.33 } ];
+                const onBrackets = [ { limit: 52886 * inflationFactor, rate: 0.0505 }, { limit: 105775 * inflationFactor, rate: 0.0915 }, { limit: 150000, rate: 0.1116 }, { limit: 220000, rate: 0.1216 }, { limit: Infinity, rate: 0.1316 } ];
+                const fedBPA = 16129 * inflationFactor; const onBPA = 12747 * inflationFactor;
+                const calculateBracketTax = (income, brackets) => { let tax = 0; let remainingIncome = income; let lastLimit = 0; for (const bracket of brackets) { const currentLimit = bracket.limit; if (remainingIncome > 0) { const taxableInBracket = Math.min(remainingIncome, currentLimit - lastLimit); tax += taxableInBracket * bracket.rate; remainingIncome -= taxableInBracket; lastLimit = currentLimit; } else { break; } } return tax; };
+                const fedTax = calculateBracketTax(taxableIncome, fedBrackets); const onTax = calculateBracketTax(taxableIncome, onBrackets);
+                const fedCredit = Math.min(taxableIncome, fedBPA) * fedBrackets[0].rate; const onCredit = Math.min(taxableIncome, onBPA) * onBrackets[0].rate;
+                return Math.max(0, (fedTax + onTax) - (fedCredit + onCredit));
+            };
+            
+            // *** MODIFIED: RRIF Calculation Logic ***
+            const getRrifWithdrawalRate = (age) => {
+                if (age < 71) return 0;
+                const rates = {
+                    71: 0.0528, 72: 0.0540, 73: 0.0553, 74: 0.0567, 75: 0.0582,
+                    76: 0.0598, 77: 0.0617, 78: 0.0636, 79: 0.0658, 80: 0.0682,
+                    81: 0.0708, 82: 0.0738, 83: 0.0771, 84: 0.0808, 85: 0.0851,
+                    86: 0.0899, 87: 0.0955, 88: 0.1021, 89: 0.1099, 90: 0.1192,
+                    91: 0.1306, 92: 0.1449, 93: 0.1634, 94: 0.1879
+                };
+                return age >= 95 ? 0.20 : (rates[age] || 0);
+            };
+
+            const runSingleSimulation = (scenario, isMonteCarloRun = false) => {
+                const { settings, expenses, incomes, oneTimeEvents, marketCrashes } = scenario;
+                let balances = { rrsp: getParsedValue(settings.rrspBalance), tfsa: getParsedValue(settings.tfsaBalance), nonReg: getParsedValue(settings.nonRegisteredBalance) };
+                const yearlyData = [];
+                const startYear = getParsedValue(settings.startYear); const endYear = getParsedValue(settings.endYear); const birthYear = getParsedValue(settings.birthYear);
+                let fundDepletionYear = endYear + 1;
+                const withdrawalRatios = [];
+                for (let rrsp = 10; rrsp >= 0; rrsp--) { for (let tfsa = 10 - rrsp; tfsa >= 0; tfsa--) { let nonReg = 10 - rrsp - tfsa; withdrawalRatios.push({ rrsp: rrsp * 10, tfsa: tfsa * 10, nonReg: nonReg * 10 }); } }
+                
+                let fundsDepleted = false;
+
+                for (let currentYear = startYear; currentYear <= endYear; currentYear++) {
+                    const age = currentYear - birthYear;
+                    const startBalances = deepCopy(balances);
+                    
+                    if (fundsDepleted) {
+                        const zeroData = { year: currentYear, age, totalEndBalance: 0, rrspStartBalance: 0, tfsaStartBalance: 0, nonRegStartBalance: 0, targetNetWithdrawal: 0, recurringIncome: 0, oneTimeIncome: 0, optimalRatio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {}, finalWithdrawals: {}, optimizationAttempts: [] };
+                        if (!isMonteCarloRun) {
+                            yearlyData.push(zeroData);
+                        } else {
+                             yearlyData.push({ year: currentYear, age, totalEndBalance: 0 });
+                        }
+                        continue;
+                    }
+
+                    let currentInvestmentReturn;
+                    if (isMonteCarloRun) {
+                        currentInvestmentReturn = generateNormalRandom(getParsedValue(settings.annualMedianReturn), getParsedValue(settings.volatility));
+                    } else if (settings.volatilityMode === 'auto') {
+                        currentInvestmentReturn = getParsedValue(settings.annualMedianReturn);
+                    } else {
+                        currentInvestmentReturn = getParsedValue(settings.investmentReturn);
+                    }
+                    
+                    const totalRecurringExpense = (expenses || []).reduce((sum, exp) => (currentYear >= getParsedValue(exp.startYear)) ? sum + (getParsedValue(exp.amount) * Math.pow(1 + getParsedValue(exp.growthRate) / 100, currentYear - getParsedValue(exp.startYear))) : sum, 0);
+                    const oneTimeExpense = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'expense' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
+                    let targetNetWithdrawal = totalRecurringExpense + oneTimeExpense;
+                    const recurringIncome = (incomes || []).reduce((sum, inc) => (currentYear >= getParsedValue(inc.startYear)) ? sum + (getParsedValue(inc.amount) * Math.pow(1 + getParsedValue(inc.growthRate) / 100, currentYear - getParsedValue(inc.startYear))) : sum, 0);
+                    const oneTimeIncome = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'income' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
+                    
+                    // *** MODIFIED: Use new RRIF rate function ***
+                    const rrifRate = getRrifWithdrawalRate(age);
+                    let rrifMinWithdrawal = (age >= 71) ? startBalances.rrsp * rrifRate : 0;
+                    
+                    let bestAttempt = { cost: Infinity, ratio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {}, finalWithdrawals: {} };
+                    const optimizationAttempts = [];
+
+                    for (const ratio of withdrawalRatios) {
+                        let low = 0, high = (targetNetWithdrawal + recurringIncome + oneTimeIncome) * 2; let grossWithdrawal = targetNetWithdrawal; let iterations = 0;
+                        while (iterations < 25) {
+                            grossWithdrawal = (low + high) / 2; if (grossWithdrawal < 0.01) { grossWithdrawal = 0; break; }
+                            let w = { rrsp: grossWithdrawal * (ratio.rrsp / 100), tfsa: grossWithdrawal * (ratio.tfsa / 100), nonReg: grossWithdrawal * (ratio.nonReg / 100) };
+                            if (w.rrsp < rrifMinWithdrawal) { const shortfall = rrifMinWithdrawal - w.rrsp; grossWithdrawal += shortfall; w.rrsp = rrifMinWithdrawal; }
+                            if (w.rrsp > startBalances.rrsp || w.tfsa > startBalances.tfsa || w.nonReg > startBalances.nonReg) { grossWithdrawal = Infinity; break; }
+                            const nonRegTaxableGain = w.nonReg * (getParsedValue(settings.nonRegGainAssumption) / 100) * 0.5;
+                            const taxableIncome = recurringIncome + oneTimeIncome + w.rrsp + nonRegTaxableGain;
+                            const taxPaid = calculateTax(taxableIncome, currentYear, startYear, getParsedValue(settings.taxInflationRate));
+                            const cashNeeded = targetNetWithdrawal + taxPaid; const shortfall = cashNeeded - grossWithdrawal;
+                            if (Math.abs(shortfall) < 1) break; if (shortfall > 0) low = grossWithdrawal; else high = grossWithdrawal; iterations++;
+                        }
+                        const attempt = { ratio, cost: grossWithdrawal, status: 'Failed' };
+                        if (grossWithdrawal !== Infinity) {
+                            attempt.status = 'Success';
+                            if (grossWithdrawal < bestAttempt.cost) {
+                                let finalGross = grossWithdrawal;
+                                let finalRRSP = finalGross * (ratio.rrsp / 100);
+                                if (finalRRSP < rrifMinWithdrawal) {
+                                    finalGross += rrifMinWithdrawal - finalRRSP;
+                                    finalRRSP = rrifMinWithdrawal;
+                                }
+                                const finalTFSA = finalGross * (ratio.tfsa / 100);
+                                const finalNonReg = finalGross * (ratio.nonReg / 100);
+
+                                if (finalRRSP > startBalances.rrsp || finalTFSA > startBalances.tfsa || finalNonReg > startBalances.nonReg) {
+                                    attempt.cost = Infinity;
+                                } else {
+                                    const nonRegTaxableGain = finalNonReg * (getParsedValue(settings.nonRegGainAssumption) / 100) * 0.5;
+                                    const taxableIncome = recurringIncome + oneTimeIncome + finalRRSP + nonRegTaxableGain;
+                                    bestAttempt = { 
+                                        cost: finalGross, 
+                                        ratio, 
+                                        grossWithdrawal: finalGross, 
+                                        taxPaid: calculateTax(taxableIncome, currentYear, startYear, getParsedValue(settings.taxInflationRate)), 
+                                        taxableIncome, 
+                                        taxableWithdrawals: { rrsp: finalRRSP, nonReg: nonRegTaxableGain },
+                                        finalWithdrawals: { rrsp: finalRRSP, tfsa: finalTFSA, nonReg: finalNonReg }
+                                    };
+                                }
+                            }
+                        }
+                        if (!isMonteCarloRun) optimizationAttempts.push(attempt);
+                    }
+                    if (bestAttempt.ratio && !isMonteCarloRun) { 
+                        const optimalAttempt = optimizationAttempts.find(a => a.ratio === bestAttempt.ratio);
+                        if (optimalAttempt) optimalAttempt.status = 'Optimal';
+                    }
+                    
+                    if (bestAttempt.cost === Infinity) {
+                        fundsDepleted = true;
+                        if(fundDepletionYear > endYear) fundDepletionYear = currentYear;
+                        balances = { rrsp: 0, tfsa: 0, nonReg: 0 };
+                        bestAttempt = { cost: 0, ratio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {rrsp: 0, nonReg: 0}, finalWithdrawals: {rrsp: 0, tfsa: 0, nonReg: 0} };
+                    }
+
+                    if (bestAttempt.ratio) { 
+                        balances.rrsp -= bestAttempt.finalWithdrawals.rrsp; 
+                        balances.tfsa -= bestAttempt.finalWithdrawals.tfsa; 
+                        balances.nonReg -= bestAttempt.finalWithdrawals.nonReg; 
+                    }
+                    
+                    balances.nonReg += recurringIncome + oneTimeIncome;
+                    
+                    const growthRate = 1 + currentInvestmentReturn / 100;
+                    balances.rrsp *= growthRate; 
+                    balances.tfsa *= growthRate; 
+                    balances.nonReg *= growthRate;
+
+                    if (settings.volatilityMode === 'discrete' && !isMonteCarloRun) {
+                        (marketCrashes || []).forEach(crash => {
+                            const crashStartYear = getParsedValue(crash.startYear); const duration = getParsedValue(crash.duration);
+                            if (duration > 0 && currentYear >= crashStartYear && currentYear < crashStartYear + duration) {
+                                const annualMultiplier = Math.pow(1 + (-Math.abs(getParsedValue(crash.totalDecline)) / 100), 1 / duration);
+                                balances.rrsp *= annualMultiplier; balances.tfsa *= annualMultiplier; balances.nonReg *= annualMultiplier;
+                            }
+                        });
+                    }
+                    const totalEndBalance = balances.rrsp + balances.tfsa + balances.nonReg;
+                    if (totalEndBalance <= 0 && fundDepletionYear > endYear) { fundDepletionYear = currentYear; }
+                    
+                    const dataToPush = { year: currentYear, age, totalEndBalance: Math.max(0, totalEndBalance) };
+                    if (!isMonteCarloRun) {
+                        Object.assign(dataToPush, { rrspStartBalance: startBalances.rrsp, tfsaStartBalance: startBalances.tfsa, nonRegStartBalance: startBalances.nonReg, targetNetWithdrawal, recurringIncome, oneTimeIncome, optimalRatio: bestAttempt.ratio, grossWithdrawal: bestAttempt.grossWithdrawal, taxPaid: bestAttempt.taxPaid, taxableIncome: bestAttempt.taxableIncome, taxableWithdrawals: bestAttempt.taxableWithdrawals, finalWithdrawals: bestAttempt.finalWithdrawals, optimizationAttempts });
+                    }
+                    yearlyData.push(dataToPush);
+                }
+                return { yearlyData, fundDepletionYear };
+            };
+
+            const runAllSimulationsForComparison = () => {
+                setIsCalculating(true); setComparisonResults([]); setMonteCarloResults(null);
+                setTimeout(() => {
+                    const results = scenarios.map(scenario => runSingleSimulation(scenario, false)).filter(Boolean);
+                    setComparisonResults(results); setIsCalculating(false);
+                    resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
+                }, 500);
+            };
+
+            const runMonteCarloTest = () => {
+                setIsCalculatingMC(true); setMonteCarloResults(null);
+                setTimeout(() => {
+                    const NUM_SIMULATIONS = activeScenario.settings.simulationCount || 5000;
+                    const allRunsYearlyData = [];
+                    for (let i = 0; i < NUM_SIMULATIONS; i++) {
+                        const result = runSingleSimulation(activeScenario, true);
+                        allRunsYearlyData.push(result.yearlyData);
+                    }
+                    const finalBalances = allRunsYearlyData.map(run => run[run.length - 1].totalEndBalance);
+                    finalBalances.sort((a, b) => a - b);
+                    const successCount = finalBalances.filter(balance => balance > 0).length;
+                    const p10_path = [], p50_path = [], p90_path = [];
+                    const numYears = allRunsYearlyData[0].length;
+                    for (let i = 0; i < numYears; i++) {
+                        const yearlyBalances = allRunsYearlyData.map(run => run[i].totalEndBalance).sort((a, b) => a - b);
+                        p10_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.1)]);
+                        p50_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.5)]);
+                        p90_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.9)]);
+                    }
+                    setMonteCarloResults({
+                        successRate: (successCount / NUM_SIMULATIONS) * 100, successCount,
+                        finalBalances: { p10: finalBalances[Math.floor(NUM_SIMULATIONS * 0.1)], p50: finalBalances[Math.floor(NUM_SIMULATIONS * 0.5)], p90: finalBalances[Math.floor(NUM_SIMULATIONS * 0.9)], },
+                        processedPlotData: { p10: p10_path, p50: p50_path, p90: p90_path },
+                        startYear: getParsedValue(activeScenario.settings.startYear),
+                        endYear: getParsedValue(activeScenario.settings.endYear),
+                        simulationCount: NUM_SIMULATIONS
+                    });
+                    setIsCalculatingMC(false);
+                    resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
+                }, 500);
+            };
+            
+            const expenseFields = [ { key: 'name', label: 'Item Name', placeholder: 'e.g., Housing', className: 'sm:col-span-7', defaultValue: '' }, { key: 'startYear', label: 'Start Year', type: 'number', placeholder: '2031', className: 'sm:col-span-4', defaultValue: activeScenario.settings.startYear }, { key: 'amount', label: "Annual Cost", type: 'number', placeholder: '24000', className: 'sm:col-span-7', defaultValue: 0 }, { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '3', step: '0.1', className: 'sm:col-span-4', defaultValue: 3 } ];
+            const incomeFields = [ { key: 'name', label: 'Item Name', placeholder: 'e.g., CPP Pension', className: 'sm:col-span-7', defaultValue: '' }, { key: 'startYear', label: 'Start Year', type: 'number', placeholder: '2045', className: 'sm:col-span-4', defaultValue: TODAY_YEAR + 20 }, { key: 'amount', label: "Annual Income", type: 'number', placeholder: '15000', className: 'sm:col-span-7', defaultValue: 0 }, { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '2.5', step: '0.1', className: 'sm:col-span-4', defaultValue: 2.5 } ];
+            const oneTimeEventFields = [ { key: 'name', label: 'Event Name', placeholder: 'e.g., Car Purchase', className: 'sm:col-span-7', defaultValue: '' }, { key: 'type', label: 'Type', type: 'select', options: [{value: 'income', label: 'Income'}, {value: 'expense', label: 'Expense'}], className: 'sm:col-span-4', defaultValue: 'expense' }, { key: 'amount', label: 'Amount', type: 'number', placeholder: '40000', className: 'sm:col-span-7', defaultValue: 0 }, { key: 'year', label: 'Year of Event', type: 'number', placeholder: '2035', className: 'sm:col-span-4', defaultValue: TODAY_YEAR + 10 } ];
+            const marketCrashFields = [ { key: 'startYear', label: 'Crash Start Year', type: 'number', placeholder: TODAY_YEAR + 10, className: 'sm:col-span-4', defaultValue: TODAY_YEAR + 10 }, { key: 'duration', label: 'Duration (Years)', type: 'number', placeholder: '2', className: 'sm:col-span-3', defaultValue: 1 }, { key: 'totalDecline', label: 'Total Decline (%)', type: 'number', placeholder: '30', className: 'sm:col-span-4', defaultValue: 20 } ];
+            const dataTabs = { settings: { label: 'General Settings' }, expenses: { label: 'Recurring Expenses' }, incomes: { label: 'Recurring Incomes' }, oneTime: { label: 'One-Time Events' }, volatility: { label: 'Market Volatility' } };
+
+            const { birthYear, startYear, endYear } = activeScenario.settings;
+            const startAge = (startYear && birthYear && String(startYear).length === 4 && String(birthYear).length === 4) ? getParsedValue(startYear) - getParsedValue(birthYear) : null;
+            const endAge = (endYear && birthYear && String(endYear).length === 4 && String(birthYear).length === 4) ? getParsedValue(endYear) - getParsedValue(birthYear) : null;
+
+            return (
+                <div className="max-w-screen-lg mx-auto p-4 sm:p-6 lg:p-8">
+                    <header className="text-center mb-6"><h1 className="text-3xl sm:text-4xl font-bold">Retirement Optimization Planner</h1><p className="text-gray-400 mt-2">Find your optimal withdrawal strategy and validate your plan's robustness.</p></header>
+                    <ExplanationAccordion />
+                    
+                    <div className="p-4 bg-gray-900 rounded-xl mb-6 border border-gray-700">
+                        <h2 className="text-lg font-semibold text-center mb-3">Scenario Manager</h2>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-center">
+                            <select value={activeScenarioId} onChange={(e) => {setActiveScenarioId(Number(e.target.value)); setMonteCarloResults(null);}} className="col-span-1 sm:col-span-2 w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md">{scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
+                            <div className="flex justify-around items-center gap-2">
+                                <button onClick={handleAddScenario} disabled={scenarios.length >= 3} className="p-2 bg-green-600 hover:bg-green-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex-1 flex justify-center" title="Add Scenario"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg></button>
+                                <button onClick={handleCopyScenario} disabled={scenarios.length >= 3} className="p-2 bg-gray-600 hover:bg-gray-500 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex-1 flex justify-center" title="Copy Scenario"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" /></svg></button>
+                                <button onClick={handleRemoveScenario} disabled={scenarios.length <= 1} className="p-2 bg-red-800 hover:bg-red-700 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex-1 flex justify-center" title="Delete Scenario"><svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {activeScenario && <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+                        <div className="mb-4"><label className="text-sm font-medium text-gray-300 mb-1 block">Scenario Name</label><input type="text" value={activeScenario.name} onChange={e => updateActiveScenario(s => ({...s, name: e.target.value}))} className="w-full bg-gray-900/50 border border-gray-600 text-blue-400 font-bold text-xl rounded-md p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"/></div>
+                        <div className="mb-6"><label className="text-sm font-medium text-gray-300 mb-1 block">Data Category</label><select value={activeDataTab} onChange={e => {setActiveDataTab(e.target.value); if(e.target.value !== 'volatility') setMonteCarloResults(null);}} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md">{Object.entries(dataTabs).map(([key, { label }]) => ( <option key={key} value={key}>{label}</option> ))}</select></div>
+                        
+                        <div className={activeDataTab === 'settings' ? '' : 'hidden'}>
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                                <div>
+                                    <h3 className="text-lg font-semibold text-gray-300 mb-2">Timeline</h3>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                            <label className="text-xs text-gray-400">Birth Year</label>
+                                            <input type="number" value={activeScenario.settings.birthYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, birthYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                            <div className="h-4 mt-1"></div> {/* Spacer for alignment */}
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-gray-400">Start Year</label>
+                                            <input type="number" value={activeScenario.settings.startYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, startYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                            <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">
+                                                {startAge !== null && startAge >= 0 && `(Age: ${startAge})`}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-gray-400">End Year</label>
+                                            <input type="number" value={activeScenario.settings.endYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, endYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
+                                            <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">
+                                                {endAge !== null && endAge >= 0 && `(Age: ${endAge})`}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div><h3 className="text-lg font-semibold text-gray-300 mb-2">Avg. Annual Return</h3><div><label className="text-xs text-gray-400">Return Rate (%) - for Discrete Mode</label><input type="number" value={activeScenario.settings.investmentReturn} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, investmentReturn: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div>
+                                <div className="md:col-span-2"><h3 className="text-lg font-semibold text-gray-300 mb-2">Initial Balances</h3><div className="grid grid-cols-1 md:grid-cols-3 gap-2"><div><label className="text-xs text-gray-400">RRSP/RRIF</label><input type="number" value={activeScenario.settings.rrspBalance} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, rrspBalance: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div><div><label className="text-xs text-gray-400">TFSA</label><input type="number" value={activeScenario.settings.tfsaBalance} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, tfsaBalance: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div><div><label className="text-xs text-gray-400">Non-Registered</label><input type="number" value={activeScenario.settings.nonRegisteredBalance} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, nonRegisteredBalance: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div></div>
+                                <div className="md:col-span-2"><h3 className="text-lg font-semibold text-gray-300 mb-2">Advanced Assumptions</h3><div className="grid grid-cols-1 md:grid-cols-2 gap-2"><div><label className="text-xs text-gray-400 flex items-center">Non-Reg Gain Assumption<Tooltip text="Select the percentage of withdrawals from the Non-Registered account that is considered a capital gain. The remainder is treated as a tax-free return of principal." /></label><select value={activeScenario.settings.nonRegGainAssumption} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, nonRegGainAssumption: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"><option value="30">Conservative (30%)</option><option value="50">Neutral (50%)</option><option value="70">Aggressive (70%)</option></select></div><div><label className="text-xs text-gray-400 flex items-center">Tax Bracket Inflation (%)<Tooltip text="The expected annual inflation rate for government tax brackets and the Basic Personal Amount (BPA). This operates independently of the growth rates for your personal income/expenses." /></label><input type="number" value={activeScenario.settings.taxInflationRate} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, taxInflationRate: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div></div>
+                            </div>
+                        </div>
+                        <div className={activeDataTab === 'expenses' ? '' : 'hidden'}><DataEntryTab items={activeScenario.expenses} setItems={(updater) => updateActiveScenario(s => ({...s, expenses: updater(s.expenses)}))} fields={expenseFields} birthYear={activeScenario.settings.birthYear} /></div>
+                        <div className={activeDataTab === 'incomes' ? '' : 'hidden'}><DataEntryTab items={activeScenario.incomes} setItems={(updater) => updateActiveScenario(s => ({...s, incomes: updater(s.incomes)}))} fields={incomeFields} birthYear={activeScenario.settings.birthYear} /></div>
+                        <div className={activeDataTab === 'oneTime' ? '' : 'hidden'}><DataEntryTab items={activeScenario.oneTimeEvents} setItems={(updater) => updateActiveScenario(s => ({...s, oneTimeEvents: updater(s.oneTimeEvents)}))} fields={oneTimeEventFields} birthYear={activeScenario.settings.birthYear} /></div>
+                        <div className={activeDataTab === 'volatility' ? '' : 'hidden'}>
+                            <VolatilityTab scenario={activeScenario} updateScenario={updateActiveScenario} runMonteCarloTest={runMonteCarloTest} isCalculatingMC={isCalculatingMC} clearMCResults={() => setMonteCarloResults(null)} marketCrashFields={marketCrashFields} />
+                        </div>
+                    </div>}
+
+                    <div className="mt-6">
+                        <button onClick={runAllSimulationsForComparison} disabled={isCalculating} className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white font-bold rounded-md text-lg flex items-center justify-center">
+                            {isCalculating ? <><div className="loader mr-3"></div><span>Calculating...</span></> : <span>Run & Compare All Scenarios</span>}
+                        </button>
+                    </div>
+
+                    <div ref={resultsRef}>
+                        <ComparisonResults scenarios={scenarios} simulationResults={comparisonResults} />
+                        {comparisonResults.length > 0 && <VerificationDashboard simulationResults={comparisonResults} scenarios={scenarios} />}
+                        {monteCarloResults && <MonteCarloResults results={monteCarloResults} /> }
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+    <script>
+        // PWA service worker registration
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('service-worker.js').then(registration => {
+                    console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                }, err => {
+                    console.log('ServiceWorker registration failed: ', err);
+                });
+            });
+        }
+    </script>
+</body>
+</html>
