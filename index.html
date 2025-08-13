@@ -1,11 +1,10 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Retirement Planner (Optimization & Monte Carlo Engine)</title>
+    <title>Upgraded Intelligent Retirement Planner</title>
     <meta name="theme-color" content="#111827"/>
-    <link rel="manifest" href="manifest.json">
     
     <!-- External Libraries -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -143,13 +142,12 @@
                         <div className="p-4 border-t border-gray-700 text-gray-300 space-y-4">
                             <p>This tool offers two core functions: <strong>Optimization</strong> (scenario comparison) and <strong>Validation</strong> (Monte Carlo testing).</p>
                             <div>
-                                <h4 className="font-semibold text-gray-200">Optimization Example: How to withdraw $35,001 and pay $0 in tax</h4>
-                                <p>When you need $35,001 for living expenses, the optimization engine finds the best withdrawal mix to minimize taxes:</p>
+                                <h4 className="font-semibold text-gray-200">Optimization: Multi-Objective Decision Making</h4>
+                                <p>Instead of just minimizing the amount you withdraw, the engine now considers multiple goals simultaneously based on your situation:</p>
                                 <ol className="list-decimal list-inside mt-1 space-y-1">
-                                     <li>Withdraw <strong>$3,500 (10%) from RRSP</strong> (Taxable income: $3,500)</li>
-                                     <li>Withdraw <strong>$31,501 (90%) from Non-Registered</strong> (Only the capital gains portion, e.g., $7,875, is taxable)</li>
-                                     <li><strong>Total Taxable Income:</strong> $3,500 (RRSP) + $7,875 (Non-Reg Gain) = $11,375</li>
-                                     <li><strong>Conclusion:</strong> This total is below Canada's Basic Personal Amount (approx. $16,129), so the final tax is <strong>$0</strong>.</li>
+                                     <li><strong>Strategic Context:</strong> It first analyzes your age, tax bracket, and account balances to understand your current financial "phase".</li>
+                                     <li><strong>Goal Weighting:</strong> Based on this context, it assigns importance (weights) to different goals. For example, if you're in a high tax bracket, minimizing tax becomes a top priority. If your TFSA is large, preserving it becomes more important.</li>
+                                     <li><strong>Best Strategy:</strong> It then tests various withdrawal combinations to find the one with the best overall score across all weighted goals, not just the one with the lowest withdrawal amount.</li>
                                 </ol>
                             </div>
                              <div>
@@ -176,8 +174,7 @@
                         
                         return (
                             <div key={item.id} className="p-4 bg-gray-900/50 rounded-lg border border-gray-700">
-                                <div className="grid grid-cols-12 gap-x-4 items-start"> {/* Changed to items-start for top alignment */}
-                                    {/* All fields are rendered in a single grid container. They will wrap based on their col-span classes. */}
+                                <div className="grid grid-cols-12 gap-x-4 items-start">
                                     {fields.map(field => (
                                         <div key={field.key} className={`col-span-12 ${field.className}`}>
                                             <label className="text-xs text-gray-400 flex items-center">{field.label}{field.tooltip && <Tooltip text={field.tooltip} />}</label>
@@ -193,7 +190,6 @@
                                             )}
                                         </div>
                                     ))}
-                                    {/* The single delete button, aligned to the top with padding to match input fields */}
                                     <div className="col-span-1 self-start pt-6"> 
                                         <button onClick={() => handleRemoveItem(item.id)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
                                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
@@ -236,37 +232,6 @@
             const colors = ['#34D399', '#F472B6', '#FBBF24'];
             const pointStyles = ['circle', 'triangle', 'star'];
             const shapeIcons = ['●', '▲', '★'];
-            
-            // *** NEW FEATURE: CSV EXPORT FUNCTION ***
-            const exportToCSV = () => {
-                const resultToExport = filteredSimulationResults.find((r, i) => scenarios[i].id === Number(selectedTableScenarioId));
-                if (!resultToExport) {
-                    alert('Please select a scenario from the dropdown to export.');
-                    return;
-                }
-                const scenarioName = scenarios.find(s => s.id === Number(selectedTableScenarioId))?.name || 'export';
-                const headers = ['Year', 'Age', 'Optimal_Ratio_RRSP(%)', 'Optimal_Ratio_TFSA(%)', 'Optimal_Ratio_NonReg(%)', 'Gross_Withdrawal', 'Tax_Paid', 'Ending_Balance'];
-                const rows = resultToExport.yearlyData.map(d => [
-                    d.year,
-                    d.age,
-                    d.optimalRatio ? d.optimalRatio.rrsp : 'N/A',
-                    d.optimalRatio ? d.optimalRatio.tfsa : 'N/A',
-                    d.optimalRatio ? d.optimalRatio.nonReg : 'N/A',
-                    d.grossWithdrawal,
-                    d.taxPaid,
-                    d.totalEndBalance
-                ].join(','));
-
-                const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows].join('\n');
-                const encodedUri = encodeURI(csvContent);
-                const link = document.createElement("a");
-                link.setAttribute("href", encodedUri);
-                link.setAttribute("download", `${scenarioName.replace(/ /g, '_')}_data.csv`);
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-            };
-
 
             useEffect(() => {
                 if (!filteredSimulationResults || filteredSimulationResults.length === 0 || !chartRef.current) return;
@@ -357,24 +322,11 @@
                     </div>
                     <div className="relative h-96"><canvas ref={chartRef}></canvas></div>
                     <div className="mt-6">
-                        {/* --- MODIFIED: Added Export Button --- */}
-                        <div className="flex flex-col sm:flex-row gap-2">
-                            <div className="flex-grow">
-                                <label htmlFor="table-select" className="block text-sm font-medium text-gray-300 mb-2">View Detailed Data:</label>
-                                <select id="table-select" value={selectedTableScenarioId} onChange={e => setSelectedTableScenarioId(e.target.value)} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
-                                    <option value="none">Hide Table</option>
-                                    {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                </select>
-                            </div>
-                            <div className="self-end">
-                                <button onClick={exportToCSV} disabled={selectedTableScenarioId === 'none'} className="w-full sm:w-auto mt-2 sm:mt-0 py-2 px-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-md flex items-center justify-center">
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-                                        <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                                    </svg>
-                                    Export to CSV
-                                </button>
-                            </div>
-                        </div>
+                        <label htmlFor="table-select" className="block text-sm font-medium text-gray-300 mb-2">View Detailed Data:</label>
+                        <select id="table-select" value={selectedTableScenarioId} onChange={e => setSelectedTableScenarioId(e.target.value)} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
+                            <option value="none">Hide Table</option>
+                            {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
                     </div>
                     {selectedResult && (
                         <div className="mt-4 max-h-96 overflow-y-auto">
@@ -450,7 +402,7 @@
                         </div>
                         <div>
                             <label className="text-sm font-medium text-gray-300 mb-1 block">Select Year to Verify:</label>
-                            <select value={selectedYear || ''} onChange={e => setSelectedYear(Number(e.target.value))} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
+                            <select value={selectedYear || ''} onChange={e => setSelectedYear(Number(e.target.value))} className="w-full p-2 border bg-gray-700 border-gray-600 text-white rounded-md" disabled={!selectedResult.yearlyData.length}>
                                 {selectedResult.yearlyData.map(d => <option key={d.year} value={d.year}>{d.year} (Age {d.age})</option>)}
                             </select>
                         </div>
@@ -470,6 +422,9 @@
                                 </thead>
                                 <tbody>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Start Balance (R/T/N)</td><td className="px-4 py-2 font-mono">{displayData(prevYearData, 'balance')}</td><td className="px-4 py-2 font-mono bg-blue-900/30">{displayData(yearData, 'balance')}</td><td className="px-4 py-2 font-mono">{displayData(nextYearData, 'balance')}</td></tr>
+                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold text-yellow-400">Strategic Context</td><td className="px-4 py-2 text-xs">{prevYearData?.strategicContext || 'N/A'}</td><td className="px-4 py-2 text-xs bg-blue-900/30 font-bold">{yearData.strategicContext}</td><td className="px-4 py-2 text-xs">{nextYearData?.strategicContext || 'N/A'}</td></tr>
+                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold text-yellow-400">Decision Logic</td><td className="px-4 py-2 text-xs">{prevYearData?.decisionReason || 'N/A'}</td><td className="px-4 py-2 text-xs bg-blue-900/30 font-bold">{yearData.decisionReason}</td><td className="px-4 py-2 text-xs">{nextYearData?.decisionReason || 'N/A'}</td></tr>
+                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Marginal Tax Rate</td><td className="px-4 py-2">{prevYearData ? `${(prevYearData.marginalTaxRate * 100).toFixed(1)}%` : 'N/A'}</td><td className="px-4 py-2 bg-blue-900/30">{`${(yearData.marginalTaxRate * 100).toFixed(1)}%`}</td><td className="px-4 py-2">{nextYearData ? `${(nextYearData.marginalTaxRate * 100).toFixed(1)}%` : 'N/A'}</td></tr>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Target Net Withdrawal</td><td className="px-4 py-2">{displayData(prevYearData, 'targetNetWithdrawal')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'targetNetWithdrawal')}</td><td className="px-4 py-2">{displayData(nextYearData, 'targetNetWithdrawal')}</td></tr>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Optimal Ratio (R/T/N)</td><td className="px-4 py-2 font-mono">{displayRatio(prevYearData)}</td><td className="px-4 py-2 font-mono bg-blue-900/30">{displayRatio(yearData)}</td><td className="px-4 py-2 font-mono">{displayRatio(nextYearData)}</td></tr>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Gross Withdrawal</td><td className="px-4 py-2">{displayData(prevYearData, 'grossWithdrawal')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'grossWithdrawal')}</td><td className="px-4 py-2">{displayData(nextYearData, 'grossWithdrawal')}</td></tr>
@@ -484,21 +439,25 @@
                             <p><span className="text-cyan-400">Net Outflow:</span> {formatCurrency(yearData.targetNetWithdrawal)} (Spending) + {formatCurrency(yearData.taxPaid)} (Tax) = {formatCurrency(yearData.targetNetWithdrawal + yearData.taxPaid)}</p>
                             <p><span className="text-cyan-400">Gross Withdrawal:</span> {formatCurrency(yearData.grossWithdrawal)} ≈ Net Outflow</p>
                         </div>
-                        <h3 className="text-lg font-semibold text-gray-300 mt-6 mb-2">Optimization Test Results for {selectedYear} (66 Combinations)</h3>
+                        <h3 className="text-lg font-semibold text-gray-300 mt-6 mb-2">Optimization Test Results for {selectedYear} (Sorted by Best Score)</h3>
                         <div className="max-h-80 overflow-y-auto">
                             <table className="w-full text-xs text-left text-gray-400">
                                 <thead className="text-gray-300 uppercase bg-gray-700/50 sticky top-0">
                                     <tr>
                                         <th className="px-2 py-2">Ratio (R/T/N)</th>
-                                        <th className="px-2 py-2">Cost (Gross Withdrawal)</th>
+                                        <th className="px-2 py-2">Total Score</th>
+                                        <th className="px-2 py-2">Tax Cost</th>
+                                        <th className="px-2 py-2">TFSA Cost</th>
                                         <th className="px-2 py-2">Status</th>
                                     </tr>
                                 </thead>
                                 <tbody className="font-mono">
-                                    {yearData.optimizationAttempts.map((attempt, i) => (
+                                    {yearData.optimizationAttempts.sort((a,b) => (a.evaluation?.totalScore ?? Infinity) - (b.evaluation?.totalScore ?? Infinity)).map((attempt, i) => (
                                         <tr key={i} className={`border-b border-gray-800 ${attempt.status === 'Optimal' ? 'bg-green-800/50 text-white' : attempt.status === 'Failed' ? 'bg-red-800/30 text-gray-500' : ''}`}>
                                             <td className="px-2 py-1">{attempt.ratio.rrsp}/{attempt.ratio.tfsa}/{attempt.ratio.nonReg}</td>
-                                            <td className="px-2 py-1">{attempt.cost === Infinity ? 'N/A' : formatCurrency(attempt.cost)}</td>
+                                            <td className="px-2 py-1">{attempt.evaluation ? attempt.evaluation.totalScore.toFixed(0) : 'N/A'}</td>
+                                            <td className="px-2 py-1">{attempt.evaluation ? formatCurrency(attempt.evaluation.scores.tax, 0) : 'N/A'}</td>
+                                            <td className="px-2 py-1">{attempt.evaluation ? formatCurrency(attempt.evaluation.scores.tfsa, 0) : 'N/A'}</td>
                                             <td className="px-2 py-1">{attempt.status}</td>
                                         </tr>
                                     ))}
@@ -514,7 +473,7 @@
         // --- Main App Component ---
         const App = () => {
             const [scenarios, setScenarios] = useState(() => {
-                const saved = localStorage.getItem('retirementScenarios_Complete_v4_final');
+                const saved = localStorage.getItem('retirementScenarios_Complete_v5_upgraded');
                 return saved ? JSON.parse(saved) : [createNewScenario('My Scenario')];
             });
             const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
@@ -526,7 +485,7 @@
             const resultsRef = useRef(null);
 
             useEffect(() => {
-                localStorage.setItem('retirementScenarios_Complete_v4_final', JSON.stringify(scenarios));
+                localStorage.setItem('retirementScenarios_Complete_v5_upgraded', JSON.stringify(scenarios));
             }, [scenarios]);
 
             const activeScenario = scenarios.find(s => s.id === activeScenarioId) || scenarios[0];
@@ -539,30 +498,173 @@
             const handleCopyScenario = () => { if (scenarios.length < 3) { const scenarioToCopy = scenarios.find(s => s.id === activeScenarioId); const newScenario = deepCopy(scenarioToCopy); newScenario.id = new Date().getTime(); newScenario.name = `${scenarioToCopy.name} (Copy)`; setScenarios(prev => [...prev, newScenario]); setActiveScenarioId(newScenario.id); } };
             const handleRemoveScenario = () => { if (scenarios.length > 1) { const newScenarios = scenarios.filter(s => s.id !== activeScenarioId); setScenarios(newScenarios); setActiveScenarioId(newScenarios[0].id); } };
 
+            // =================================================================================
+            // --- CORE LOGIC & SIMULATION ENGINE ---
+            // =================================================================================
+
+            /**
+             * Calculates tax and marginal rate.
+             * @returns {{tax: number, marginalRate: number}}
+             */
             const calculateTax = (taxableIncome, year, startYear, taxInflationRate) => {
                 const inflationFactor = Math.pow(1 + taxInflationRate / 100, year - startYear);
                 const fedBrackets = [ { limit: 57375 * inflationFactor, rate: 0.15 }, { limit: 114750 * inflationFactor, rate: 0.205 }, { limit: 177882 * inflationFactor, rate: 0.26 }, { limit: 253414 * inflationFactor, rate: 0.29 }, { limit: Infinity, rate: 0.33 } ];
                 const onBrackets = [ { limit: 52886 * inflationFactor, rate: 0.0505 }, { limit: 105775 * inflationFactor, rate: 0.0915 }, { limit: 150000, rate: 0.1116 }, { limit: 220000, rate: 0.1216 }, { limit: Infinity, rate: 0.1316 } ];
                 const fedBPA = 16129 * inflationFactor; const onBPA = 12747 * inflationFactor;
+                
                 const calculateBracketTax = (income, brackets) => { let tax = 0; let remainingIncome = income; let lastLimit = 0; for (const bracket of brackets) { const currentLimit = bracket.limit; if (remainingIncome > 0) { const taxableInBracket = Math.min(remainingIncome, currentLimit - lastLimit); tax += taxableInBracket * bracket.rate; remainingIncome -= taxableInBracket; lastLimit = currentLimit; } else { break; } } return tax; };
-                const fedTax = calculateBracketTax(taxableIncome, fedBrackets); const onTax = calculateBracketTax(taxableIncome, onBrackets);
-                const fedCredit = Math.min(taxableIncome, fedBPA) * fedBrackets[0].rate; const onCredit = Math.min(taxableIncome, onBPA) * onBrackets[0].rate;
-                return Math.max(0, (fedTax + onTax) - (fedCredit + onCredit));
+                
+                const fedTax = calculateBracketTax(taxableIncome, fedBrackets);
+                const onTax = calculateBracketTax(taxableIncome, onBrackets);
+                const fedCredit = Math.min(taxableIncome, fedBPA) * fedBrackets[0].rate;
+                const onCredit = Math.min(taxableIncome, onBPA) * onBrackets[0].rate;
+                const totalTax = Math.max(0, (fedTax + onTax) - (fedCredit + onCredit));
+
+                // --- Calculate Marginal Tax Rate ---
+                let marginalRate = 0;
+                let fedMarginal = 0;
+                let onMarginal = 0;
+                let lastLimitFed = 0;
+                for (const bracket of fedBrackets) {
+                    if (taxableIncome > lastLimitFed && taxableIncome <= bracket.limit) {
+                        fedMarginal = bracket.rate;
+                        break;
+                    }
+                    if(taxableIncome > bracket.limit) {
+                        fedMarginal = bracket.rate;
+                    }
+                    lastLimitFed = bracket.limit;
+                }
+                let lastLimitOn = 0;
+                for (const bracket of onBrackets) {
+                    if (taxableIncome > lastLimitOn && taxableIncome <= bracket.limit) {
+                        onMarginal = bracket.rate;
+                        break;
+                    }
+                     if(taxableIncome > bracket.limit) {
+                        onMarginal = bracket.rate;
+                    }
+                    lastLimitOn = bracket.limit;
+                }
+                marginalRate = fedMarginal + onMarginal;
+
+                return { tax: totalTax, marginalRate: marginalRate };
             };
-            
-            // *** MODIFIED: RRIF Calculation Logic ***
-            const getRrifWithdrawalRate = (age) => {
-                if (age < 71) return 0;
-                const rates = {
+
+            // --- UPGRADE 1: Accurate RRIF calculation ---
+            /**
+             * Calculates RRIF minimum withdrawal based on official CRA factors.
+             * This fixes the 'division by zero' bug at age 90 and improves accuracy.
+             */
+            const getRrifMinWithdrawal = (age, rrspBalance) => {
+                if (age < 71) {
+                    return 0;
+                }
+                // Source: Canada Revenue Agency (CRA) - RRIF Minimum Withdrawal Factors
+                const rrifFactors = {
                     71: 0.0528, 72: 0.0540, 73: 0.0553, 74: 0.0567, 75: 0.0582,
                     76: 0.0598, 77: 0.0617, 78: 0.0636, 79: 0.0658, 80: 0.0682,
                     81: 0.0708, 82: 0.0738, 83: 0.0771, 84: 0.0808, 85: 0.0851,
                     86: 0.0899, 87: 0.0955, 88: 0.1021, 89: 0.1099, 90: 0.1192,
                     91: 0.1306, 92: 0.1449, 93: 0.1634, 94: 0.1879
                 };
-                return age >= 95 ? 0.20 : (rates[age] || 0);
+                const factor = (age >= 95) ? 0.20 : rrifFactors[age];
+                return rrspBalance * factor;
             };
 
+            // --- UPGRADE 2: Precise gross withdrawal calculation using Newton's Method ---
+            /**
+             * Solves for the exact gross withdrawal needed to cover net spending and taxes.
+             * Replaces the less precise iterative `while` loop.
+             */
+            const solveForGrossWithdrawal = (params) => {
+                const { targetNetWithdrawal, ratio, rrifMinWithdrawal, startBalances, baseTaxableIncome, year, startYear, taxInflationRate, nonRegGainAssumption } = params;
+
+                let grossWithdrawal = targetNetWithdrawal; // Initial guess
+
+                for (let i = 0; i < 15; i++) { // Max 15 iterations to prevent infinite loops
+                    let w = {
+                        rrsp: Math.max(rrifMinWithdrawal, grossWithdrawal * (ratio.rrsp / 100)),
+                        tfsa: grossWithdrawal * (ratio.tfsa / 100),
+                        nonReg: grossWithdrawal * (ratio.nonReg / 100)
+                    };
+                    
+                    if (w.rrsp > startBalances.rrsp || w.tfsa > startBalances.tfsa || w.nonReg > startBalances.nonReg) {
+                        return Infinity; // This strategy is not possible with current balances
+                    }
+
+                    const nonRegTaxableGain = w.nonReg * (nonRegGainAssumption / 100) * 0.5;
+                    const taxableIncome = baseTaxableIncome + w.rrsp + nonRegTaxableGain;
+                    
+                    const { tax: taxPaid, marginalRate } = calculateTax(taxableIncome, year, startYear, taxInflationRate);
+                    
+                    // f(x) = grossWithdrawal - taxPaid - targetNetWithdrawal. We want to find x where f(x) = 0.
+                    const fx = grossWithdrawal - taxPaid - targetNetWithdrawal;
+
+                    if (Math.abs(fx) < 0.01) { // If we're close enough, we're done
+                        return grossWithdrawal;
+                    }
+
+                    // f'(x) = derivative of f(x)
+                    const dfx = 1 - (marginalRate * ((ratio.rrsp / 100) + (ratio.nonReg / 100 * (nonRegGainAssumption / 100) * 0.5)));
+
+                    // Avoid division by zero if the derivative is flat
+                    if (Math.abs(dfx) < 1e-6) {
+                        grossWithdrawal += fx > 0 ? -100 : 100; // Nudge the value and try again
+                        continue;
+                    }
+                    
+                    // Newton's method: x_new = x_old - f(x) / f'(x)
+                    grossWithdrawal = grossWithdrawal - fx / dfx;
+                }
+
+                return grossWithdrawal; // Return best guess after iterations
+            };
+
+            const getStrategicContext = (age, balances, totalAssets, marginalTaxRate) => {
+                let phase;
+                if (age < 71) phase = "Pre-RRIF Bridge";
+                else if (age <= 80) phase = "Early RRIF";
+                else if (age <= 90) phase = "Mid RRIF";
+                else phase = "Late RRIF";
+
+                let taxBracket;
+                if (marginalTaxRate < 0.25) taxBracket = "Low";
+                else if (marginalTaxRate < 0.35) taxBracket = "Medium";
+                else if (marginalTaxRate < 0.45) taxBracket = "High";
+                else taxBracket = "Very High";
+
+                const tfsaRatio = totalAssets > 0 ? (balances.tfsa / totalAssets) * 100 : 0;
+                let tfsaLevel;
+                if (tfsaRatio < 15) tfsaLevel = "Low";
+                else if (tfsaRatio < 40) tfsaLevel = "Medium";
+                else tfsaLevel = "High";
+
+                return {
+                    phase,
+                    taxBracket,
+                    tfsaLevel,
+                    description: `Phase: ${phase}, Tax: ${taxBracket}, TFSA: ${tfsaLevel}`
+                };
+            };
+
+            const evaluateStrategy = (attempt, startBalances, context) => {
+                const { taxPaid, grossWithdrawal, finalBalances } = attempt;
+                const weights = { tax: 1.0, withdrawal: 0.5, tfsaPreservation: 0.2 };
+                if (context.taxBracket === "High" || context.taxBracket === "Very High") { weights.tax = 2.0; }
+                if (context.tfsaLevel === "High") { weights.tfsaPreservation = 1.5; }
+                if (context.phase === "Pre-RRIF Bridge" && context.taxBracket !== "High") { weights.tax = 0.8; }
+                const taxScore = taxPaid;
+                const withdrawalScore = grossWithdrawal;
+                const tfsaPreservationScore = (startBalances.tfsa - finalBalances.tfsa);
+                const totalScore = (taxScore * weights.tax) + (withdrawalScore * weights.withdrawal) + (tfsaPreservationScore * weights.tfsaPreservation);
+                let reason = "Optimal balance found.";
+                if (weights.tax > 1) reason = "Prioritized tax minimization.";
+                else if (weights.tfsaPreservation > 1) reason = "Prioritized TFSA preservation.";
+                else if (weights.tax < 1) reason = "Opportunistic RRSP withdrawal for tax smoothing.";
+                return { totalScore, scores: { tax: taxScore, withdrawal: withdrawalScore, tfsa: tfsaPreservationScore }, reason };
+            };
+            
             const runSingleSimulation = (scenario, isMonteCarloRun = false) => {
                 const { settings, expenses, incomes, oneTimeEvents, marketCrashes } = scenario;
                 let balances = { rrsp: getParsedValue(settings.rrspBalance), tfsa: getParsedValue(settings.tfsaBalance), nonReg: getParsedValue(settings.nonRegisteredBalance) };
@@ -579,12 +681,9 @@
                     const startBalances = deepCopy(balances);
                     
                     if (fundsDepleted) {
-                        const zeroData = { year: currentYear, age, totalEndBalance: 0, rrspStartBalance: 0, tfsaStartBalance: 0, nonRegStartBalance: 0, targetNetWithdrawal: 0, recurringIncome: 0, oneTimeIncome: 0, optimalRatio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {}, finalWithdrawals: {}, optimizationAttempts: [] };
-                        if (!isMonteCarloRun) {
-                            yearlyData.push(zeroData);
-                        } else {
-                             yearlyData.push({ year: currentYear, age, totalEndBalance: 0 });
-                        }
+                        const zeroData = { year: currentYear, age, totalEndBalance: 0, rrspStartBalance: 0, tfsaStartBalance: 0, nonRegStartBalance: 0, targetNetWithdrawal: 0, recurringIncome: 0, oneTimeIncome: 0, optimalRatio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {}, finalWithdrawals: {}, optimizationAttempts: [], strategicContext: 'N/A', decisionReason: 'Funds depleted', multiObjectiveScores: {}, marginalTaxRate: 0 };
+                        if (!isMonteCarloRun) { yearlyData.push(zeroData); } 
+                        else { yearlyData.push({ year: currentYear, age, totalEndBalance: 0 }); }
                         continue;
                     }
 
@@ -603,68 +702,82 @@
                     const recurringIncome = (incomes || []).reduce((sum, inc) => (currentYear >= getParsedValue(inc.startYear)) ? sum + (getParsedValue(inc.amount) * Math.pow(1 + getParsedValue(inc.growthRate) / 100, currentYear - getParsedValue(inc.startYear))) : sum, 0);
                     const oneTimeIncome = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'income' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
                     
-                    // *** MODIFIED: Use new RRIF rate function ***
-                    const rrifRate = getRrifWithdrawalRate(age);
-                    let rrifMinWithdrawal = (age >= 71) ? startBalances.rrsp * rrifRate : 0;
+                    // --- UPGRADE 1 APPLIED ---
+                    // Call the new, accurate RRIF calculation function.
+                    let rrifMinWithdrawal = getRrifMinWithdrawal(age, startBalances.rrsp);
                     
-                    let bestAttempt = { cost: Infinity, ratio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {}, finalWithdrawals: {} };
+                    const totalStartAssets = startBalances.rrsp + startBalances.tfsa + startBalances.nonReg;
+                    const baseTaxableIncome = recurringIncome + oneTimeIncome;
+                    const baseTaxInfo = calculateTax(baseTaxableIncome, currentYear, startYear, getParsedValue(settings.taxInflationRate));
+                    const strategicContext = getStrategicContext(age, startBalances, totalStartAssets, baseTaxInfo.marginalRate);
+                    
+                    let bestAttempt = { totalScore: Infinity, ratio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {}, finalWithdrawals: {}, scores: {}, reason: '', marginalTaxRate: 0 };
                     const optimizationAttempts = [];
 
                     for (const ratio of withdrawalRatios) {
-                        let low = 0, high = (targetNetWithdrawal + recurringIncome + oneTimeIncome) * 2; let grossWithdrawal = targetNetWithdrawal; let iterations = 0;
-                        while (iterations < 25) {
-                            grossWithdrawal = (low + high) / 2; if (grossWithdrawal < 0.01) { grossWithdrawal = 0; break; }
-                            let w = { rrsp: grossWithdrawal * (ratio.rrsp / 100), tfsa: grossWithdrawal * (ratio.tfsa / 100), nonReg: grossWithdrawal * (ratio.nonReg / 100) };
-                            if (w.rrsp < rrifMinWithdrawal) { const shortfall = rrifMinWithdrawal - w.rrsp; grossWithdrawal += shortfall; w.rrsp = rrifMinWithdrawal; }
-                            if (w.rrsp > startBalances.rrsp || w.tfsa > startBalances.tfsa || w.nonReg > startBalances.nonReg) { grossWithdrawal = Infinity; break; }
-                            const nonRegTaxableGain = w.nonReg * (getParsedValue(settings.nonRegGainAssumption) / 100) * 0.5;
-                            const taxableIncome = recurringIncome + oneTimeIncome + w.rrsp + nonRegTaxableGain;
-                            const taxPaid = calculateTax(taxableIncome, currentYear, startYear, getParsedValue(settings.taxInflationRate));
-                            const cashNeeded = targetNetWithdrawal + taxPaid; const shortfall = cashNeeded - grossWithdrawal;
-                            if (Math.abs(shortfall) < 1) break; if (shortfall > 0) low = grossWithdrawal; else high = grossWithdrawal; iterations++;
-                        }
-                        const attempt = { ratio, cost: grossWithdrawal, status: 'Failed' };
-                        if (grossWithdrawal !== Infinity) {
-                            attempt.status = 'Success';
-                            if (grossWithdrawal < bestAttempt.cost) {
-                                let finalGross = grossWithdrawal;
-                                let finalRRSP = finalGross * (ratio.rrsp / 100);
-                                if (finalRRSP < rrifMinWithdrawal) {
-                                    finalGross += rrifMinWithdrawal - finalRRSP;
-                                    finalRRSP = rrifMinWithdrawal;
-                                }
-                                const finalTFSA = finalGross * (ratio.tfsa / 100);
-                                const finalNonReg = finalGross * (ratio.nonReg / 100);
+                        
+                        // --- UPGRADE 2 APPLIED ---
+                        // Call the new, precise solver function instead of the old `while` loop.
+                        const grossWithdrawal = solveForGrossWithdrawal({
+                            targetNetWithdrawal, ratio, rrifMinWithdrawal, startBalances,
+                            baseTaxableIncome, year: currentYear, startYear,
+                            taxInflationRate: getParsedValue(settings.taxInflationRate),
+                            nonRegGainAssumption: getParsedValue(settings.nonRegGainAssumption)
+                        });
+                        
+                        const attemptResult = { ratio, cost: grossWithdrawal, status: 'Failed', evaluation: null };
 
-                                if (finalRRSP > startBalances.rrsp || finalTFSA > startBalances.tfsa || finalNonReg > startBalances.nonReg) {
-                                    attempt.cost = Infinity;
-                                } else {
-                                    const nonRegTaxableGain = finalNonReg * (getParsedValue(settings.nonRegGainAssumption) / 100) * 0.5;
-                                    const taxableIncome = recurringIncome + oneTimeIncome + finalRRSP + nonRegTaxableGain;
-                                    bestAttempt = { 
-                                        cost: finalGross, 
-                                        ratio, 
-                                        grossWithdrawal: finalGross, 
-                                        taxPaid: calculateTax(taxableIncome, currentYear, startYear, getParsedValue(settings.taxInflationRate)), 
-                                        taxableIncome, 
-                                        taxableWithdrawals: { rrsp: finalRRSP, nonReg: nonRegTaxableGain },
-                                        finalWithdrawals: { rrsp: finalRRSP, tfsa: finalTFSA, nonReg: finalNonReg }
-                                    };
-                                }
+                        if (grossWithdrawal !== Infinity) {
+                            attemptResult.status = 'Success';
+                            
+                            const finalRRSP = Math.max(rrifMinWithdrawal, grossWithdrawal * (ratio.rrsp / 100));
+                            const finalTFSA = grossWithdrawal * (ratio.tfsa / 100);
+                            const finalNonReg = grossWithdrawal * (ratio.nonReg / 100);
+                            const currentWithdrawals = { rrsp: finalRRSP, tfsa: finalTFSA, nonReg: finalNonReg };
+                            
+                            const nonRegTaxableGain = currentWithdrawals.nonReg * (getParsedValue(settings.nonRegGainAssumption) / 100) * 0.5;
+                            const currentTaxableIncome = baseTaxableIncome + currentWithdrawals.rrsp + nonRegTaxableGain;
+                            const { tax: currentTaxPaid, marginalRate: currentMarginalRate } = calculateTax(currentTaxableIncome, currentYear, startYear, getParsedValue(settings.taxInflationRate));
+                            
+                            const tempBalancesAfterWithdrawal = {
+                                rrsp: startBalances.rrsp - currentWithdrawals.rrsp,
+                                tfsa: startBalances.tfsa - currentWithdrawals.tfsa,
+                                nonReg: startBalances.nonReg - currentWithdrawals.nonReg + recurringIncome + oneTimeIncome
+                            };
+
+                            const attemptFinalBalances = {
+                                rrsp: tempBalancesAfterWithdrawal.rrsp * (1 + currentInvestmentReturn / 100),
+                                tfsa: tempBalancesAfterWithdrawal.tfsa * (1 + currentInvestmentReturn / 100),
+                                nonReg: tempBalancesAfterWithdrawal.nonReg * (1 + currentInvestmentReturn / 100)
+                            };
+                            
+                            const attemptForEval = { taxPaid: currentTaxPaid, grossWithdrawal, finalBalances: attemptFinalBalances };
+                            
+                            const evaluation = evaluateStrategy(attemptForEval, startBalances, strategicContext);
+                            attemptResult.evaluation = evaluation;
+
+                            if (evaluation.totalScore < bestAttempt.totalScore) {
+                                bestAttempt = {
+                                    totalScore: evaluation.totalScore, ratio, grossWithdrawal, taxPaid: currentTaxPaid, 
+                                    taxableIncome: currentTaxableIncome, marginalRate: currentMarginalRate,
+                                    taxableWithdrawals: { rrsp: currentWithdrawals.rrsp, nonReg: nonRegTaxableGain },
+                                    finalWithdrawals: currentWithdrawals, scores: evaluation.scores, reason: evaluation.reason
+                                };
                             }
                         }
-                        if (!isMonteCarloRun) optimizationAttempts.push(attempt);
+                        if (!isMonteCarloRun) optimizationAttempts.push(attemptResult);
                     }
+
                     if (bestAttempt.ratio && !isMonteCarloRun) { 
                         const optimalAttempt = optimizationAttempts.find(a => a.ratio === bestAttempt.ratio);
                         if (optimalAttempt) optimalAttempt.status = 'Optimal';
                     }
                     
-                    if (bestAttempt.cost === Infinity) {
+                    if (bestAttempt.totalScore === Infinity) {
                         fundsDepleted = true;
                         if(fundDepletionYear > endYear) fundDepletionYear = currentYear;
                         balances = { rrsp: 0, tfsa: 0, nonReg: 0 };
-                        bestAttempt = { cost: 0, ratio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {rrsp: 0, nonReg: 0}, finalWithdrawals: {rrsp: 0, tfsa: 0, nonReg: 0} };
+                        bestAttempt = { totalScore: Infinity, ratio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {rrsp: 0, nonReg: 0}, finalWithdrawals: {rrsp: 0, tfsa: 0, nonReg: 0}, scores: {}, reason: 'Funds depleted', marginalTaxRate: 0 };
                     }
 
                     if (bestAttempt.ratio) { 
@@ -694,7 +807,17 @@
                     
                     const dataToPush = { year: currentYear, age, totalEndBalance: Math.max(0, totalEndBalance) };
                     if (!isMonteCarloRun) {
-                        Object.assign(dataToPush, { rrspStartBalance: startBalances.rrsp, tfsaStartBalance: startBalances.tfsa, nonRegStartBalance: startBalances.nonReg, targetNetWithdrawal, recurringIncome, oneTimeIncome, optimalRatio: bestAttempt.ratio, grossWithdrawal: bestAttempt.grossWithdrawal, taxPaid: bestAttempt.taxPaid, taxableIncome: bestAttempt.taxableIncome, taxableWithdrawals: bestAttempt.taxableWithdrawals, finalWithdrawals: bestAttempt.finalWithdrawals, optimizationAttempts });
+                        Object.assign(dataToPush, { 
+                            rrspStartBalance: startBalances.rrsp, tfsaStartBalance: startBalances.tfsa, nonRegStartBalance: startBalances.nonReg, 
+                            targetNetWithdrawal, recurringIncome, oneTimeIncome, 
+                            optimalRatio: bestAttempt.ratio, grossWithdrawal: bestAttempt.grossWithdrawal, taxPaid: bestAttempt.taxPaid, 
+                            taxableIncome: bestAttempt.taxableIncome, taxableWithdrawals: bestAttempt.taxableWithdrawals, 
+                            finalWithdrawals: bestAttempt.finalWithdrawals, optimizationAttempts,
+                            strategicContext: strategicContext.description,
+                            decisionReason: bestAttempt.reason,
+                            multiObjectiveScores: bestAttempt.scores,
+                            marginalTaxRate: bestAttempt.marginalTaxRate,
+                        });
                     }
                     yearlyData.push(dataToPush);
                 }
@@ -755,7 +878,7 @@
 
             return (
                 <div className="max-w-screen-lg mx-auto p-4 sm:p-6 lg:p-8">
-                    <header className="text-center mb-6"><h1 className="text-3xl sm:text-4xl font-bold">Retirement Optimization Planner</h1><p className="text-gray-400 mt-2">Find your optimal withdrawal strategy and validate your plan's robustness.</p></header>
+                    <header className="text-center mb-6"><h1 className="text-3xl sm:text-4xl font-bold">Upgraded Intelligent Retirement Planner</h1><p className="text-gray-400 mt-2">Find your optimal withdrawal strategy and validate your plan's robustness.</p></header>
                     <ExplanationAccordion />
                     
                     <div className="p-4 bg-gray-900 rounded-xl mb-6 border border-gray-700">
@@ -782,7 +905,7 @@
                                         <div>
                                             <label className="text-xs text-gray-400">Birth Year</label>
                                             <input type="number" value={activeScenario.settings.birthYear} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, birthYear: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/>
-                                            <div className="h-4 mt-1"></div> {/* Spacer for alignment */}
+                                            <div className="h-4 mt-1"></div>
                                         </div>
                                         <div>
                                             <label className="text-xs text-gray-400">Start Year</label>
@@ -829,18 +952,6 @@
         };
 
         ReactDOM.render(<App />, document.getElementById('root'));
-    </script>
-    <script>
-        // PWA service worker registration
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('service-worker.js').then(registration => {
-                    console.log('ServiceWorker registration successful with scope: ', registration.scope);
-                }, err => {
-                    console.log('ServiceWorker registration failed: ', err);
-                });
-            });
-        }
     </script>
 </body>
 </html>
