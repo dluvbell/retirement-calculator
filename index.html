@@ -696,14 +696,31 @@
                         currentInvestmentReturn = getParsedValue(settings.investmentReturn);
                     }
                     
-                    const totalRecurringExpense = (expenses || []).reduce((sum, exp) => (currentYear >= getParsedValue(exp.startYear)) ? sum + (getParsedValue(exp.amount) * Math.pow(1 + getParsedValue(exp.growthRate) / 100, currentYear - getParsedValue(exp.startYear))) : sum, 0);
+                    // --- MODIFICATION START: Recurring Item Compounding Logic ---
+                    // The compounding for recurring expenses now starts from TODAY_YEAR, not the item's startYear.
+                    // This reflects the amount as a present-day value that grows over time.
+                    const totalRecurringExpense = (expenses || []).reduce((sum, exp) => {
+                        if (currentYear >= getParsedValue(exp.startYear)) {
+                            const compoundedAmount = getParsedValue(exp.amount) * Math.pow(1 + getParsedValue(exp.growthRate) / 100, currentYear - TODAY_YEAR);
+                            return sum + compoundedAmount;
+                        }
+                        return sum;
+                    }, 0);
                     const oneTimeExpense = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'expense' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
                     let targetNetWithdrawal = totalRecurringExpense + oneTimeExpense;
-                    const recurringIncome = (incomes || []).reduce((sum, inc) => (currentYear >= getParsedValue(inc.startYear)) ? sum + (getParsedValue(inc.amount) * Math.pow(1 + getParsedValue(inc.growthRate) / 100, currentYear - getParsedValue(inc.startYear))) : sum, 0);
+                    
+                    // The compounding for recurring incomes now starts from TODAY_YEAR, not the item's startYear.
+                    const recurringIncome = (incomes || []).reduce((sum, inc) => {
+                        if (currentYear >= getParsedValue(inc.startYear)) {
+                            const compoundedAmount = getParsedValue(inc.amount) * Math.pow(1 + getParsedValue(inc.growthRate) / 100, currentYear - TODAY_YEAR);
+                            return sum + compoundedAmount;
+                        }
+                        return sum;
+                    }, 0);
+                    // --- MODIFICATION END ---
+                    
                     const oneTimeIncome = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'income' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
                     
-                    // --- UPGRADE 1 APPLIED ---
-                    // Call the new, accurate RRIF calculation function.
                     let rrifMinWithdrawal = getRrifMinWithdrawal(age, startBalances.rrsp);
                     
                     const totalStartAssets = startBalances.rrsp + startBalances.tfsa + startBalances.nonReg;
@@ -716,8 +733,6 @@
 
                     for (const ratio of withdrawalRatios) {
                         
-                        // --- UPGRADE 2 APPLIED ---
-                        // Call the new, precise solver function instead of the old `while` loop.
                         const grossWithdrawal = solveForGrossWithdrawal({
                             targetNetWithdrawal, ratio, rrifMinWithdrawal, startBalances,
                             baseTaxableIncome, year: currentYear, startYear,
