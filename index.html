@@ -72,7 +72,10 @@
         // --- Utility Functions ---
         const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
         const TODAY_YEAR = new Date().getFullYear();
-        const formatCurrency = (amount, digits = 0) => new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: digits, maximumFractionDigits: digits }).format(amount);
+        const formatCurrency = (amount, digits = 0) => {
+            if (amount === null || amount === undefined || isNaN(amount)) return 'N/A';
+            return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: digits, maximumFractionDigits: digits }).format(amount);
+        }
         const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
         // Box-Muller transform to generate normally distributed random numbers
         const generateNormalRandom = (mean, stddev) => {
@@ -214,37 +217,23 @@
             const chartRef = useRef(null);
             const chartInstanceRef = useRef(null);
 
-            const filteredSimulationResults = useMemo(() => {
-                if (!simulationResults) return [];
-                return simulationResults.map(result => {
-                    const depletionIndex = result.yearlyData.findIndex(data => data.totalEndBalance <= 0);
-                    if (depletionIndex > 0) {
-                        return {
-                            ...result,
-                            yearlyData: result.yearlyData.slice(0, depletionIndex + 1)
-                        };
-                    }
-                    return result;
-                });
-            }, [simulationResults]);
-
             const [selectedTableScenarioId, setSelectedTableScenarioId] = useState(scenarios.length > 0 ? scenarios[0].id : 'none');
             const colors = ['#34D399', '#F472B6', '#FBBF24'];
             const pointStyles = ['circle', 'triangle', 'star'];
             const shapeIcons = ['●', '▲', '★'];
 
             useEffect(() => {
-                if (!filteredSimulationResults || filteredSimulationResults.length === 0 || !chartRef.current) return;
+                if (!simulationResults || simulationResults.length === 0 || !chartRef.current) return;
                 if (chartInstanceRef.current) chartInstanceRef.current.destroy();
                 
-                const allYears = filteredSimulationResults.flatMap(r => r.yearlyData.map(d => d.year));
+                const allYears = simulationResults.flatMap(r => r.yearlyData.map(d => d.year));
                 if (allYears.length === 0) return;
 
                 const minYear = Math.min(...allYears);
                 const maxYear = Math.max(...allYears);
                 const labels = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
                 
-                const datasets = filteredSimulationResults.map((result, index) => {
+                const datasets = simulationResults.map((result, index) => {
                     const scenario = scenarios[index];
                     const dataMap = new Map(result.yearlyData.map(d => [d.year, d.totalEndBalance]));
                     const chartData = labels.map(year => dataMap.has(year) ? dataMap.get(year) : null);
@@ -295,9 +284,9 @@
                         }
                     }
                 });
-            }, [scenarios, filteredSimulationResults]); 
+            }, [scenarios, simulationResults]); 
 
-            const selectedResult = filteredSimulationResults.find((r, i) => scenarios[i].id === Number(selectedTableScenarioId));
+            const selectedResult = simulationResults.find((r, i) => scenarios[i].id === Number(selectedTableScenarioId));
             
             if (!simulationResults || simulationResults.length === 0) return null;
             
@@ -674,18 +663,9 @@
                 const withdrawalRatios = [];
                 for (let rrsp = 10; rrsp >= 0; rrsp--) { for (let tfsa = 10 - rrsp; tfsa >= 0; tfsa--) { let nonReg = 10 - rrsp - tfsa; withdrawalRatios.push({ rrsp: rrsp * 10, tfsa: tfsa * 10, nonReg: nonReg * 10 }); } }
                 
-                let fundsDepleted = false;
-
                 for (let currentYear = startYear; currentYear <= endYear; currentYear++) {
                     const age = currentYear - birthYear;
                     const startBalances = deepCopy(balances);
-                    
-                    if (fundsDepleted) {
-                        const zeroData = { year: currentYear, age, totalEndBalance: 0, rrspStartBalance: 0, tfsaStartBalance: 0, nonRegStartBalance: 0, targetNetWithdrawal: 0, recurringIncome: 0, oneTimeIncome: 0, optimalRatio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {}, finalWithdrawals: {}, optimizationAttempts: [], strategicContext: 'N/A', decisionReason: 'Funds depleted', multiObjectiveScores: {}, marginalTaxRate: 0 };
-                        if (!isMonteCarloRun) { yearlyData.push(zeroData); } 
-                        else { yearlyData.push({ year: currentYear, age, totalEndBalance: 0 }); }
-                        continue;
-                    }
 
                     let currentInvestmentReturn;
                     if (isMonteCarloRun) {
@@ -696,9 +676,6 @@
                         currentInvestmentReturn = getParsedValue(settings.investmentReturn);
                     }
                     
-                    // --- MODIFICATION START: Recurring Item Compounding Logic ---
-                    // The compounding for recurring expenses now starts from TODAY_YEAR, not the item's startYear.
-                    // This reflects the amount as a present-day value that grows over time.
                     const totalRecurringExpense = (expenses || []).reduce((sum, exp) => {
                         if (currentYear >= getParsedValue(exp.startYear)) {
                             const compoundedAmount = getParsedValue(exp.amount) * Math.pow(1 + getParsedValue(exp.growthRate) / 100, currentYear - TODAY_YEAR);
@@ -709,7 +686,6 @@
                     const oneTimeExpense = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'expense' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
                     let targetNetWithdrawal = totalRecurringExpense + oneTimeExpense;
                     
-                    // The compounding for recurring incomes now starts from TODAY_YEAR, not the item's startYear.
                     const recurringIncome = (incomes || []).reduce((sum, inc) => {
                         if (currentYear >= getParsedValue(inc.startYear)) {
                             const compoundedAmount = getParsedValue(inc.amount) * Math.pow(1 + getParsedValue(inc.growthRate) / 100, currentYear - TODAY_YEAR);
@@ -717,7 +693,6 @@
                         }
                         return sum;
                     }, 0);
-                    // --- MODIFICATION END ---
                     
                     const oneTimeIncome = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'income' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
                     
@@ -732,7 +707,6 @@
                     const optimizationAttempts = [];
 
                     for (const ratio of withdrawalRatios) {
-                        
                         const grossWithdrawal = solveForGrossWithdrawal({
                             targetNetWithdrawal, ratio, rrifMinWithdrawal, startBalances,
                             baseTaxableIncome, year: currentYear, startYear,
@@ -783,18 +757,46 @@
                         if (!isMonteCarloRun) optimizationAttempts.push(attemptResult);
                     }
 
+                    // --- MODIFICATION START: Show the year of depletion ---
+                    if (bestAttempt.totalScore === Infinity) {
+                        if(fundDepletionYear > endYear) {
+                           fundDepletionYear = currentYear;
+                        }
+                        // Add a final row showing the state at the beginning of the depletion year.
+                        if (!isMonteCarloRun) {
+                            const depletionData = {
+                                year: currentYear,
+                                age,
+                                rrspStartBalance: startBalances.rrsp,
+                                tfsaStartBalance: startBalances.tfsa,
+                                nonRegStartBalance: startBalances.nonReg,
+                                targetNetWithdrawal, // Show how much was needed this year
+                                recurringIncome,
+                                oneTimeIncome,
+                                optimalRatio: null, // No optimal ratio found
+                                grossWithdrawal: null, // Could not withdraw
+                                taxPaid: null, // Could not pay tax
+                                totalEndBalance: 0, // Funds depleted
+                                taxableIncome: baseTaxableIncome,
+                                taxableWithdrawals: { rrsp: 0, nonReg: 0 },
+                                finalWithdrawals: { rrsp: 0, tfsa: 0, nonReg: 0 },
+                                optimizationAttempts,
+                                strategicContext: strategicContext.description,
+                                decisionReason: 'Funds depleted: Insufficient assets to cover expenses and taxes.',
+                                multiObjectiveScores: {},
+                                marginalTaxRate: baseTaxInfo.marginalRate,
+                            };
+                            yearlyData.push(depletionData);
+                        }
+                        break; // Exit the simulation loop for this scenario
+                    }
+                    // --- MODIFICATION END ---
+                    
                     if (bestAttempt.ratio && !isMonteCarloRun) { 
                         const optimalAttempt = optimizationAttempts.find(a => a.ratio === bestAttempt.ratio);
                         if (optimalAttempt) optimalAttempt.status = 'Optimal';
                     }
                     
-                    if (bestAttempt.totalScore === Infinity) {
-                        fundsDepleted = true;
-                        if(fundDepletionYear > endYear) fundDepletionYear = currentYear;
-                        balances = { rrsp: 0, tfsa: 0, nonReg: 0 };
-                        bestAttempt = { totalScore: Infinity, ratio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {rrsp: 0, nonReg: 0}, finalWithdrawals: {rrsp: 0, tfsa: 0, nonReg: 0}, scores: {}, reason: 'Funds depleted', marginalTaxRate: 0 };
-                    }
-
                     if (bestAttempt.ratio) { 
                         balances.rrsp -= bestAttempt.finalWithdrawals.rrsp; 
                         balances.tfsa -= bestAttempt.finalWithdrawals.tfsa; 
@@ -818,7 +820,6 @@
                         });
                     }
                     const totalEndBalance = balances.rrsp + balances.tfsa + balances.nonReg;
-                    if (totalEndBalance <= 0 && fundDepletionYear > endYear) { fundDepletionYear = currentYear; }
                     
                     const dataToPush = { year: currentYear, age, totalEndBalance: Math.max(0, totalEndBalance) };
                     if (!isMonteCarloRun) {
@@ -857,17 +858,27 @@
                         const result = runSingleSimulation(activeScenario, true);
                         allRunsYearlyData.push(result.yearlyData);
                     }
-                    const finalBalances = allRunsYearlyData.map(run => run[run.length - 1].totalEndBalance);
+                    const finalBalances = allRunsYearlyData.map(run => {
+                        const lastYear = run[run.length - 1];
+                        return lastYear ? lastYear.totalEndBalance : 0;
+                    });
+
                     finalBalances.sort((a, b) => a - b);
                     const successCount = finalBalances.filter(balance => balance > 0).length;
+                    
                     const p10_path = [], p50_path = [], p90_path = [];
-                    const numYears = allRunsYearlyData[0].length;
-                    for (let i = 0; i < numYears; i++) {
-                        const yearlyBalances = allRunsYearlyData.map(run => run[i].totalEndBalance).sort((a, b) => a - b);
+                    
+                    const startYear = getParsedValue(activeScenario.settings.startYear);
+                    const endYear = getParsedValue(activeScenario.settings.endYear);
+                    const totalYearsInPlan = endYear - startYear + 1;
+
+                    for (let i = 0; i < totalYearsInPlan; i++) {
+                        const yearlyBalances = allRunsYearlyData.map(run => (run[i] ? run[i].totalEndBalance : 0)).sort((a, b) => a - b);
                         p10_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.1)]);
                         p50_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.5)]);
                         p90_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.9)]);
                     }
+
                     setMonteCarloResults({
                         successRate: (successCount / NUM_SIMULATIONS) * 100, successCount,
                         finalBalances: { p10: finalBalances[Math.floor(NUM_SIMULATIONS * 0.1)], p50: finalBalances[Math.floor(NUM_SIMULATIONS * 0.5)], p90: finalBalances[Math.floor(NUM_SIMULATIONS * 0.9)], },
@@ -969,4 +980,4 @@
         ReactDOM.render(<App />, document.getElementById('root'));
     </script>
 </body>
-</html>
+</ht
