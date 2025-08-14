@@ -413,7 +413,6 @@
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Start Balance (R/T/N)</td><td className="px-4 py-2 font-mono">{displayData(prevYearData, 'balance')}</td><td className="px-4 py-2 font-mono bg-blue-900/30">{displayData(yearData, 'balance')}</td><td className="px-4 py-2 font-mono">{displayData(nextYearData, 'balance')}</td></tr>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold text-yellow-400">Strategic Context</td><td className="px-4 py-2 text-xs">{prevYearData?.strategicContext || 'N/A'}</td><td className="px-4 py-2 text-xs bg-blue-900/30 font-bold">{yearData.strategicContext}</td><td className="px-4 py-2 text-xs">{nextYearData?.strategicContext || 'N/A'}</td></tr>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold text-yellow-400">Decision Logic</td><td className="px-4 py-2 text-xs">{prevYearData?.decisionReason || 'N/A'}</td><td className="px-4 py-2 text-xs bg-blue-900/30 font-bold">{yearData.decisionReason}</td><td className="px-4 py-2 text-xs">{nextYearData?.decisionReason || 'N/A'}</td></tr>
-                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Marginal Tax Rate</td><td className="px-4 py-2">{prevYearData ? `${(prevYearData.marginalTaxRate * 100).toFixed(1)}%` : 'N/A'}</td><td className="px-4 py-2 bg-blue-900/30">{`${(yearData.marginalTaxRate * 100).toFixed(1)}%`}</td><td className="px-4 py-2">{nextYearData ? `${(nextYearData.marginalTaxRate * 100).toFixed(1)}%` : 'N/A'}</td></tr>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Target Net Withdrawal</td><td className="px-4 py-2">{displayData(prevYearData, 'targetNetWithdrawal')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'targetNetWithdrawal')}</td><td className="px-4 py-2">{displayData(nextYearData, 'targetNetWithdrawal')}</td></tr>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Optimal Ratio (R/T/N)</td><td className="px-4 py-2 font-mono">{displayRatio(prevYearData)}</td><td className="px-4 py-2 font-mono bg-blue-900/30">{displayRatio(yearData)}</td><td className="px-4 py-2 font-mono">{displayRatio(nextYearData)}</td></tr>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Gross Withdrawal</td><td className="px-4 py-2">{displayData(prevYearData, 'grossWithdrawal')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'grossWithdrawal')}</td><td className="px-4 py-2">{displayData(nextYearData, 'grossWithdrawal')}</td></tr>
@@ -832,7 +831,7 @@
                             strategicContext: strategicContext.description,
                             decisionReason: bestAttempt.reason,
                             multiObjectiveScores: bestAttempt.scores,
-                            marginalTaxRate: bestAttempt.marginalTaxRate,
+                            marginalTaxRate: bestAttempt.marginalRate,
                         });
                     }
                     yearlyData.push(dataToPush);
@@ -980,4 +979,4 @@
         ReactDOM.render(<App />, document.getElementById('root'));
     </script>
 </body>
-</ht
+</html>
