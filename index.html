@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upgraded Intelligent Retirement Planner</title>
+    <title>Intelligent Retirement Planner (Multi-Province)</title>
     <meta name="theme-color" content="#111827"/>
     
     <!-- External Libraries -->
@@ -68,16 +68,23 @@
 
     <script type="text/babel">
         const { useState, useEffect, useRef, useMemo } = React;
+
+        // =================================================================================
+        // --- CALCULATION ENGINE ---
+        // =================================================================================
         
-        // --- Utility Functions ---
-        const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
+        // --- Engine Constants ---
+        const OAS_CLAWBACK_THRESHOLD = 86912;
+        const OAS_CLAWBACK_RATE = 0.15;
         const TODAY_YEAR = new Date().getFullYear();
+
+        // --- Engine Utility Functions ---
+        const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
         const formatCurrency = (amount, digits = 0) => {
             if (amount === null || amount === undefined || isNaN(amount)) return 'N/A';
             return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: digits, maximumFractionDigits: digits }).format(amount);
-        }
+        };
         const getParsedValue = (val) => { const num = parseFloat(val); return isNaN(num) ? 0 : num; };
-        // Box-Muller transform to generate normally distributed random numbers
         const generateNormalRandom = (mean, stddev) => {
             let u1 = 0, u2 = 0;
             while(u1 === 0) u1 = Math.random();
@@ -86,49 +93,238 @@
             return z0 * stddev + mean;
         };
 
-        // --- New Scenario Creator (with Monte Carlo settings) ---
-        const createNewScenario = (name) => ({
+        const taxRules = {
+            ON: {
+                bpa: 12747,
+                brackets: [ { limit: 52886, rate: 0.0505 }, { limit: 105775, rate: 0.0915 }, { limit: 150000, rate: 0.1116 }, { limit: 220000, rate: 0.1216 }, { limit: Infinity, rate: 0.1316 } ],
+                surtax: { threshold1: 5883, rate1: 0.20, threshold2: 7528, rate2: 0.36 }
+            },
+            BC: {
+                bpa: 12580,
+                brackets: [ { limit: 47937, rate: 0.0506 }, { limit: 95875, rate: 0.077 }, { limit: 110070, rate: 0.105 }, { limit: 133664, rate: 0.1229 }, { limit: 181232, rate: 0.147 }, { limit: 252752, rate: 0.168 }, { limit: Infinity, rate: 0.205 } ]
+            },
+            AB: {
+                bpa: 21885,
+                brackets: [ { limit: 148269, rate: 0.10 }, { limit: 177922, rate: 0.12 }, { limit: 237230, rate: 0.13 }, { limit: 355845, rate: 0.14 }, { limit: Infinity, rate: 0.15 } ]
+            },
+            SK: {
+                bpa: 18491,
+                brackets: [ { limit: 52057, rate: 0.105 }, { limit: 148734, rate: 0.125 }, { limit: Infinity, rate: 0.145 } ]
+            },
+            MB: {
+                bpa: 15780,
+                brackets: [ { limit: 47000, rate: 0.108 }, { limit: 100000, rate: 0.1275 }, { limit: Infinity, rate: 0.174 } ]
+            }
+        };
+
+        const calculateTax = (taxableIncome, year, startYear, taxInflationRate, province) => {
+            const inflationFactor = Math.pow(1 + taxInflationRate / 100, year - startYear);
+            const fedBrackets = [ { limit: 55867, rate: 0.15 }, { limit: 111733, rate: 0.205 }, { limit: 173205, rate: 0.26 }, { limit: 246752, rate: 0.29 }, { limit: Infinity, rate: 0.33 } ];
+            const fedBPA = 15705 * inflationFactor;
+            const calculateBracketTax = (income, brackets, factor) => { let tax = 0; let remainingIncome = income; let lastLimit = 0; for (const bracket of brackets) { const currentLimit = bracket.limit === Infinity ? Infinity : bracket.limit * factor; if (remainingIncome > 0) { const taxableInBracket = Math.min(remainingIncome, currentLimit - lastLimit); tax += taxableInBracket * bracket.rate; remainingIncome -= taxableInBracket; if (remainingIncome <= 0) break; lastLimit = currentLimit; } else { break; } } return tax; };
+            const fedTax = calculateBracketTax(taxableIncome, fedBrackets, inflationFactor);
+            const fedCredit = Math.min(taxableIncome, fedBPA) * fedBrackets[0].rate;
+            let provRules = taxRules[province];
+            if (!provRules) { console.error(`Tax rules for province "${province}" not found. Defaulting to ON.`); provRules = taxRules['ON']; }
+            const provTaxBrackets = provRules.brackets;
+            const provBPA = provRules.bpa * inflationFactor;
+            let provTax = calculateBracketTax(taxableIncome, provTaxBrackets, inflationFactor);
+            if (province === 'ON' && provRules.surtax) { let surtax = 0; const inflatedT1 = provRules.surtax.threshold1 * inflationFactor; const inflatedT2 = provRules.surtax.threshold2 * inflationFactor; if (provTax > inflatedT1) { surtax += (Math.min(provTax, inflatedT2) - inflatedT1) * provRules.surtax.rate1; } if (provTax > inflatedT2) { surtax += (provTax - inflatedT2) * provRules.surtax.rate2; } provTax += surtax; }
+            const provCredit = Math.min(taxableIncome, provBPA) * provTaxBrackets[0].rate;
+            const totalTax = Math.max(0, (fedTax - fedCredit) + (provTax - provCredit));
+            const fedMarginalBracket = fedBrackets.find(b => taxableIncome <= b.limit * inflationFactor) || fedBrackets[fedBrackets.length - 1];
+            const provMarginalBracket = provTaxBrackets.find(b => taxableIncome <= b.limit * inflationFactor) || provTaxBrackets[provTaxBrackets.length - 1];
+            let marginalRate = fedMarginalBracket.rate + provMarginalBracket.rate;
+            if (province === 'ON' && provRules.surtax) { const inflatedT1 = provRules.surtax.threshold1 * inflationFactor; const inflatedT2 = provRules.surtax.threshold2 * inflationFactor; if (provTax > inflatedT1) marginalRate += provMarginalBracket.rate * provRules.surtax.rate1; if (provTax > inflatedT2) marginalRate += provMarginalBracket.rate * provRules.surtax.rate2; }
+            return { tax: totalTax, marginalRate };
+        };
+
+        const calculateTaxWithClawback = (params) => {
+            const { netIncomeForClawback, oasIncome, year, startYear, taxInflationRate, province } = params;
+            const inflationFactor = Math.pow(1 + taxInflationRate / 100, year - startYear);
+            const inflatedThreshold = OAS_CLAWBACK_THRESHOLD * inflationFactor;
+            let oasClawback = 0;
+            if (netIncomeForClawback > inflatedThreshold) { const excessIncome = netIncomeForClawback - inflatedThreshold; oasClawback = Math.min(oasIncome, excessIncome * OAS_CLAWBACK_RATE); }
+            const finalTaxableIncome = netIncomeForClawback + oasIncome - oasClawback;
+            const { tax: regularTax, marginalRate } = calculateTax(finalTaxableIncome, year, startYear, taxInflationRate, province);
+            const totalTaxPaid = regularTax + oasClawback;
+            return { tax: totalTaxPaid, marginalRate, oasClawback };
+        };
+
+        const getRrifMinWithdrawal = (age, rrspBalance) => {
+            if (age < 71) return 0;
+            const rrifFactors = { 71: 0.0528, 72: 0.0540, 73: 0.0553, 74: 0.0567, 75: 0.0582, 76: 0.0598, 77: 0.0617, 78: 0.0636, 79: 0.0658, 80: 0.0682, 81: 0.0708, 82: 0.0738, 83: 0.0771, 84: 0.0808, 85: 0.0851, 86: 0.0899, 87: 0.0955, 88: 0.1021, 89: 0.1099, 90: 0.1192, 91: 0.1306, 92: 0.1449, 93: 0.1634, 94: 0.1879 };
+            const factor = (age >= 95) ? 0.20 : rrifFactors[age];
+            return rrspBalance * factor;
+        };
+
+        const solveForGrossWithdrawal = (params) => {
+            const { targetNetWithdrawal, ratio, rrifMinWithdrawal, startBalances, baseNetIncomeForClawback, oasIncome, year, startYear, taxInflationRate, nonRegGainAssumption, province } = params;
+            let grossWithdrawal = targetNetWithdrawal;
+            for (let i = 0; i < 15; i++) {
+                let w = { rrsp: Math.max(rrifMinWithdrawal, grossWithdrawal * (ratio.rrsp / 100)), tfsa: grossWithdrawal * (ratio.tfsa / 100), nonReg: grossWithdrawal * (ratio.nonReg / 100) };
+                if (w.rrsp > startBalances.rrsp || w.tfsa > startBalances.tfsa || w.nonReg > startBalances.nonReg) return Infinity;
+                const nonRegTaxableGain = w.nonReg * (nonRegGainAssumption / 100) * 0.5;
+                const netIncomeForClawback = baseNetIncomeForClawback + w.rrsp + nonRegTaxableGain;
+                const { tax: taxPaid, marginalRate } = calculateTaxWithClawback({ netIncomeForClawback, oasIncome, year, startYear, taxInflationRate, province });
+                const fx = grossWithdrawal - taxPaid - targetNetWithdrawal;
+                if (Math.abs(fx) < 0.01) return grossWithdrawal;
+                const inflationFactor = Math.pow(1 + taxInflationRate / 100, year - startYear);
+                const inflatedThreshold = OAS_CLAWBACK_THRESHOLD * inflationFactor;
+                const clawbackMarginalRate = netIncomeForClawback > inflatedThreshold ? OAS_CLAWBACK_RATE : 0;
+                const withdrawalTaxRate = marginalRate + clawbackMarginalRate;
+                const dfx = 1 - (withdrawalTaxRate * ((ratio.rrsp / 100) + (ratio.nonReg / 100 * (nonRegGainAssumption / 100) * 0.5)));
+                if (Math.abs(dfx) < 1e-6) { grossWithdrawal += fx > 0 ? -100 : 100; continue; }
+                grossWithdrawal = grossWithdrawal - fx / dfx;
+            }
+            return grossWithdrawal;
+        };
+
+        const getStrategicContext = (age, balances, totalAssets, marginalTaxRate) => {
+            let phase = age < 71 ? "Pre-RRIF Bridge" : age <= 80 ? "Early RRIF" : age <= 90 ? "Mid RRIF" : "Late RRIF";
+            let taxBracket = marginalTaxRate < 0.25 ? "Low" : marginalTaxRate < 0.35 ? "Medium" : marginalTaxRate < 0.45 ? "High" : "Very High";
+            const tfsaRatio = totalAssets > 0 ? (balances.tfsa / totalAssets) * 100 : 0;
+            let tfsaLevel = tfsaRatio < 15 ? "Low" : tfsaRatio < 40 ? "Medium" : "High";
+            return { phase, taxBracket, tfsaLevel, description: `Phase: ${phase}, Tax: ${taxBracket}, TFSA: ${tfsaLevel}` };
+        };
+
+        const evaluateStrategy = (attempt, startBalances, context) => {
+            const { taxPaid, grossWithdrawal, finalBalances, oasClawback } = attempt;
+            const weights = { tax: 1.0, withdrawal: 0.5, tfsaPreservation: 0.2, oasClawback: 2.5 };
+            if (context.taxBracket === "High" || context.taxBracket === "Very High") { weights.tax = 2.0; }
+            if (context.tfsaLevel === "High") { weights.tfsaPreservation = 1.5; }
+            if (context.phase === "Pre-RRIF Bridge" && context.taxBracket !== "High") { weights.tax = 0.8; }
+            const taxScore = taxPaid;
+            const withdrawalScore = grossWithdrawal;
+            const tfsaPreservationScore = (startBalances.tfsa - finalBalances.tfsa);
+            const oasClawbackScore = oasClawback;
+            const totalScore = (taxScore * weights.tax) + (withdrawalScore * weights.withdrawal) + (tfsaPreservationScore * weights.tfsaPreservation) + (oasClawbackScore * weights.oasClawback);
+            let reason = "Optimal balance found.";
+            if (oasClawback > 0) reason = "Withdrawal optimized, but OAS Clawback occurred.";
+            if (weights.tax > 1.5) reason = "Prioritized tax minimization due to high bracket.";
+            if (weights.tfsaPreservation > 1) reason = "Prioritized TFSA preservation.";
+            return { totalScore, scores: { tax: taxScore, withdrawal: withdrawalScore, tfsa: tfsaPreservationScore }, reason };
+        };
+
+        const runSingleSimulation = (scenario, isMonteCarloRun = false) => {
+            const { settings, expenses, incomes, oneTimeEvents, marketCrashes } = scenario;
+            const { province } = settings;
+            let balances = { rrsp: getParsedValue(settings.rrspBalance), tfsa: getParsedValue(settings.tfsaBalance), nonReg: getParsedValue(settings.nonRegisteredBalance) };
+            const yearlyData = [];
+            const startYear = getParsedValue(settings.startYear); const endYear = getParsedValue(settings.endYear); const birthYear = getParsedValue(settings.birthYear);
+            let fundDepletionYear = endYear + 1;
+            const withdrawalRatios = [];
+            for (let rrsp = 10; rrsp >= 0; rrsp--) { for (let tfsa = 10 - rrsp; tfsa >= 0; tfsa--) { let nonReg = 10 - rrsp - tfsa; withdrawalRatios.push({ rrsp: rrsp * 10, tfsa: tfsa * 10, nonReg: nonReg * 10 }); } }
+            for (let currentYear = startYear; currentYear <= endYear; currentYear++) {
+                const age = currentYear - birthYear;
+                const startBalances = deepCopy(balances);
+                let currentInvestmentReturn = isMonteCarloRun ? generateNormalRandom(getParsedValue(settings.annualMedianReturn), getParsedValue(settings.volatility)) : (settings.volatilityMode === 'auto' ? getParsedValue(settings.annualMedianReturn) : getParsedValue(settings.investmentReturn));
+                const getCompoundedAmount = (item) => getParsedValue(item.amount) * Math.pow(1 + getParsedValue(item.growthRate) / 100, currentYear - TODAY_YEAR);
+                const totalRecurringExpense = (expenses || []).filter(e => currentYear >= getParsedValue(e.startYear)).reduce((sum, e) => sum + getCompoundedAmount(e), 0);
+                const oneTimeExpense = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'expense' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
+                let targetNetWithdrawal = totalRecurringExpense + oneTimeExpense;
+                const oasIncome = (incomes || []).filter(inc => inc.type === 'OAS' && currentYear >= getParsedValue(inc.startYear)).reduce((sum, inc) => sum + getCompoundedAmount(inc), 0);
+                const nonOasRecurringIncome = (incomes || []).filter(inc => inc.type !== 'OAS' && currentYear >= getParsedValue(inc.startYear)).reduce((sum, inc) => sum + getCompoundedAmount(inc), 0);
+                const oneTimeIncome = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'income' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
+                let rrifMinWithdrawal = getRrifMinWithdrawal(age, startBalances.rrsp);
+                const baseNetIncomeForClawback = nonOasRecurringIncome + oneTimeIncome;
+                const baseTaxInfo = calculateTaxWithClawback({ netIncomeForClawback: baseNetIncomeForClawback, oasIncome, year: currentYear, startYear, taxInflationRate: getParsedValue(settings.taxInflationRate), province });
+                const strategicContext = getStrategicContext(age, startBalances, Object.values(startBalances).reduce((a,b)=>a+b), baseTaxInfo.marginalRate);
+                let bestAttempt = { totalScore: Infinity, ratio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {}, finalWithdrawals: {}, scores: {}, reason: '', marginalTaxRate: 0, oasClawback: 0, netIncomeForClawback: 0 };
+                const optimizationAttempts = [];
+                for (const ratio of withdrawalRatios) {
+                    const grossWithdrawal = solveForGrossWithdrawal({ targetNetWithdrawal, ratio, rrifMinWithdrawal, startBalances, baseNetIncomeForClawback, oasIncome, year: currentYear, startYear, taxInflationRate: getParsedValue(settings.taxInflationRate), nonRegGainAssumption: getParsedValue(settings.nonRegGainAssumption), province });
+                    const attemptResult = { ratio, cost: grossWithdrawal, status: 'Failed', evaluation: null };
+                    if (grossWithdrawal !== Infinity) {
+                        attemptResult.status = 'Success';
+                        const finalRRSP = Math.max(rrifMinWithdrawal, grossWithdrawal * (ratio.rrsp / 100));
+                        const finalTFSA = grossWithdrawal * (ratio.tfsa / 100);
+                        const finalNonReg = grossWithdrawal * (ratio.nonReg / 100);
+                        const currentWithdrawals = { rrsp: finalRRSP, tfsa: finalTFSA, nonReg: finalNonReg };
+                        const nonRegTaxableGain = currentWithdrawals.nonReg * (getParsedValue(settings.nonRegGainAssumption) / 100) * 0.5;
+                        const netIncomeForClawback = baseNetIncomeForClawback + currentWithdrawals.rrsp + nonRegTaxableGain;
+                        const { tax: currentTaxPaid, marginalRate: currentMarginalRate, oasClawback: currentOasClawback } = calculateTaxWithClawback({ netIncomeForClawback, oasIncome, year: currentYear, startYear, taxInflationRate: getParsedValue(settings.taxInflationRate), province });
+                        const tempBalancesAfterWithdrawal = { rrsp: startBalances.rrsp - currentWithdrawals.rrsp, tfsa: startBalances.tfsa - currentWithdrawals.tfsa, nonReg: startBalances.nonReg - currentWithdrawals.nonReg + nonOasRecurringIncome + oneTimeIncome + (oasIncome - currentOasClawback) };
+                        const attemptFinalBalances = { rrsp: tempBalancesAfterWithdrawal.rrsp * (1 + currentInvestmentReturn / 100), tfsa: tempBalancesAfterWithdrawal.tfsa * (1 + currentInvestmentReturn / 100), nonReg: tempBalancesAfterWithdrawal.nonReg * (1 + currentInvestmentReturn / 100) };
+                        const attemptForEval = { taxPaid: currentTaxPaid, grossWithdrawal, finalBalances: attemptFinalBalances, oasClawback: currentOasClawback };
+                        const evaluation = evaluateStrategy(attemptForEval, startBalances, strategicContext);
+                        attemptResult.evaluation = evaluation;
+                        if (evaluation.totalScore < bestAttempt.totalScore) {
+                            bestAttempt = { totalScore: evaluation.totalScore, ratio, grossWithdrawal, taxPaid: currentTaxPaid, taxableIncome: netIncomeForClawback + oasIncome - currentOasClawback, marginalRate: currentMarginalRate, taxableWithdrawals: { rrsp: currentWithdrawals.rrsp, nonReg: nonRegTaxableGain }, finalWithdrawals: currentWithdrawals, scores: evaluation.scores, reason: evaluation.reason, oasClawback: currentOasClawback, netIncomeForClawback };
+                        }
+                    }
+                    if (!isMonteCarloRun) optimizationAttempts.push(attemptResult);
+                }
+                if (bestAttempt.totalScore === Infinity) {
+                    if(fundDepletionYear > endYear) fundDepletionYear = currentYear;
+                    if (!isMonteCarloRun) {
+                        yearlyData.push({ year: currentYear, age, rrspStartBalance: startBalances.rrsp, tfsaStartBalance: startBalances.tfsa, nonRegStartBalance: startBalances.nonReg, targetNetWithdrawal, recurringIncome: nonOasRecurringIncome + oasIncome, oneTimeIncome, optimalRatio: null, grossWithdrawal: null, taxPaid: null, totalEndBalance: 0, taxableIncome: baseNetIncomeForClawback + oasIncome, taxableWithdrawals: { rrsp: 0, nonReg: 0 }, finalWithdrawals: { rrsp: 0, tfsa: 0, nonReg: 0 }, optimizationAttempts, strategicContext: strategicContext.description, decisionReason: 'Funds depleted: Insufficient assets to cover expenses and taxes.', multiObjectiveScores: {}, marginalRate: baseTaxInfo.marginalRate, oasClawback: baseTaxInfo.oasClawback, netIncomeForClawback: baseNetIncomeForClawback });
+                    }
+                    break;
+                }
+                if (bestAttempt.ratio && !isMonteCarloRun) { const optimalAttempt = optimizationAttempts.find(a => a.ratio === bestAttempt.ratio); if (optimalAttempt) optimalAttempt.status = 'Optimal'; }
+                balances.rrsp -= bestAttempt.finalWithdrawals.rrsp; balances.tfsa -= bestAttempt.finalWithdrawals.tfsa; balances.nonReg -= bestAttempt.finalWithdrawals.nonReg;
+                balances.nonReg += nonOasRecurringIncome + oneTimeIncome + (oasIncome - bestAttempt.oasClawback);
+                const growthRate = 1 + currentInvestmentReturn / 100;
+                balances.rrsp *= growthRate; balances.tfsa *= growthRate; balances.nonReg *= growthRate;
+                if (settings.volatilityMode === 'discrete' && !isMonteCarloRun) {
+                    (marketCrashes || []).forEach(crash => {
+                        const crashStartYear = getParsedValue(crash.startYear); const duration = getParsedValue(crash.duration);
+                        if (duration > 0 && currentYear >= crashStartYear && currentYear < crashStartYear + duration) {
+                            const annualMultiplier = Math.pow(1 + (-Math.abs(getParsedValue(crash.totalDecline)) / 100), 1 / duration);
+                            balances.rrsp *= annualMultiplier; balances.tfsa *= annualMultiplier; balances.nonReg *= annualMultiplier;
+                        }
+                    });
+                }
+                const totalEndBalance = balances.rrsp + balances.tfsa + balances.nonReg;
+                const dataToPush = { year: currentYear, age, totalEndBalance: Math.max(0, totalEndBalance) };
+                if (!isMonteCarloRun) {
+                    Object.assign(dataToPush, { rrspStartBalance: startBalances.rrsp, tfsaStartBalance: startBalances.tfsa, nonRegStartBalance: startBalances.nonReg, targetNetWithdrawal, recurringIncome: nonOasRecurringIncome + oasIncome, oneTimeIncome, optimalRatio: bestAttempt.ratio, grossWithdrawal: bestAttempt.grossWithdrawal, taxPaid: bestAttempt.taxPaid, taxableIncome: bestAttempt.taxableIncome, taxableWithdrawals: bestAttempt.taxableWithdrawals, finalWithdrawals: bestAttempt.finalWithdrawals, optimizationAttempts, strategicContext: strategicContext.description, decisionReason: bestAttempt.reason, multiObjectiveScores: bestAttempt.scores, marginalTaxRate: bestAttempt.marginalRate, oasClawback: bestAttempt.oasClawback, netIncomeForClawback: bestAttempt.netIncomeForClawback });
+                }
+                yearlyData.push(dataToPush);
+            }
+            return { yearlyData, fundDepletionYear };
+        };
+
+        // =================================================================================
+        // --- UI COMPONENTS ---
+        // =================================================================================
+
+        const createNewScenario = (name, province = 'ON') => ({
             id: new Date().getTime(),
             name: name,
             settings: {
+                province: province,
                 birthYear: 1981,
                 startYear: 2031,
                 endYear: 2081,
                 rrspBalance: 1000000,
                 tfsaBalance: 500000,
                 nonRegisteredBalance: 2000000,
-                investmentReturn: 7, // For discrete simulation
+                investmentReturn: 7, 
                 nonRegGainAssumption: 50, 
                 taxInflationRate: 2.5,
-                // --- Monte Carlo Settings ---
-                volatilityMode: 'discrete', // 'discrete' or 'auto'
+                volatilityMode: 'discrete',
                 portfolioComposition: { growth: 60, dividend: 20, bond: 20 },
-                annualMedianReturn: 7, // For Monte Carlo
-                volatility: 15, // For Monte Carlo
+                annualMedianReturn: 7,
+                volatility: 15,
                 simulationCount: 5000,
             },
             expenses: [
                 { id: 1, name: 'Living Expenses', amount: 20000, startYear: 2031, growthRate: 3 },
-                { id: 2, name: 'Insurance', amount: 5000, startYear: 2031, growthRate: 3 },
-                { id: 3, name: 'Travel', amount: 10000, startYear: 2031, growthRate: 3 },
             ],
             incomes: [
-                 { id: 1, name: 'Other Pension', amount: 2000, startYear: 2041, growthRate: 3 },
-                 { id: 2, name: 'CPP', amount: 2500, startYear: 2046, growthRate: 3 },
-                 { id: 3, name: 'OAS', amount: 1000, startYear: 2046, growthRate: 3 },
+                 { id: 1, type: 'Other', customName: 'Other Pension', amount: 2000, startYear: 2041, growthRate: 3 },
+                 { id: 2, type: 'CPP', customName: '', amount: 15000, startYear: 2046, growthRate: 3 },
+                 { id: 3, type: 'OAS', customName: '', amount: 8000, startYear: 2046, growthRate: 3 },
             ],
-            oneTimeEvents: [
-                 { id: 1, name: 'Medical Bill', type: 'expense', amount: 30000, year: 2061 },
-            ],
+            oneTimeEvents: [],
             marketCrashes: [],
         });
-
-        // --- Components ---
+        
         const Tooltip = ({ text }) => (
             <div className="tooltip ml-1">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-                </svg>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
                 <span className="tooltiptext">{text}</span>
             </div>
         );
@@ -143,19 +339,19 @@
                     </button>
                     {isOpen && (
                         <div className="p-4 border-t border-gray-700 text-gray-300 space-y-4">
-                            <p>This tool offers two core functions: <strong>Optimization</strong> (scenario comparison) and <strong>Validation</strong> (Monte Carlo testing).</p>
+                            <p>This tool offers two core functions: <strong>Optimization</strong> (scenario comparison) and <strong>Validation</strong> (Monte Carlo testing). It now supports multiple provinces and includes <strong>OAS Clawback</strong> calculations for higher accuracy.</p>
                             <div>
                                 <h4 className="font-semibold text-gray-200">Optimization: Multi-Objective Decision Making</h4>
-                                <p>Instead of just minimizing the amount you withdraw, the engine now considers multiple goals simultaneously based on your situation:</p>
                                 <ol className="list-decimal list-inside mt-1 space-y-1">
-                                     <li><strong>Strategic Context:</strong> It first analyzes your age, tax bracket, and account balances to understand your current financial "phase".</li>
-                                     <li><strong>Goal Weighting:</strong> Based on this context, it assigns importance (weights) to different goals. For example, if you're in a high tax bracket, minimizing tax becomes a top priority. If your TFSA is large, preserving it becomes more important.</li>
-                                     <li><strong>Best Strategy:</strong> It then tests various withdrawal combinations to find the one with the best overall score across all weighted goals, not just the one with the lowest withdrawal amount.</li>
+                                     <li><strong>Multi-Province Engine:</strong> Select your province of residence to apply accurate, region-specific tax rules.</li>
+                                     <li><strong>OAS Clawback Aware:</strong> The engine now actively tries to minimize OAS clawback as a key goal, especially in high-income years.</li>
+                                     <li><strong>Strategic Context:</strong> It analyzes your age, tax bracket, and account balances to understand your financial "phase".</li>
+                                     <li><strong>Best Strategy:</strong> It tests various withdrawal combinations to find the one with the best overall score across all weighted goals.</li>
                                 </ol>
                             </div>
                              <div>
                                 <h4 className="font-semibold text-gray-200">Validation: Monte Carlo Simulation</h4>
-                                <p>Instead of a fixed return rate, this simulates thousands of random market scenarios based on your 'Median Return' and 'Volatility' settings. It shows the <strong>probability of success</strong>, indicating how robust your plan is against market fluctuations.</p>
+                                <p>Instead of a fixed return rate, this simulates thousands of random market scenarios to show the <strong>probability of success</strong>, indicating how robust your plan is against market fluctuations.</p>
                             </div>
                         </div>
                     )}
@@ -163,9 +359,9 @@
             );
         };
 
-        const DataEntryTab = ({ items, setItems, fields, birthYear }) => {
+        const DataEntryTab = ({ items, setItems, fields, birthYear, itemType }) => {
             const handleItemChange = (id, field, value) => { setItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item)); };
-            const handleAddItem = () => { const newItem = { id: new Date().getTime() }; fields.forEach(field => newItem[field.key] = field.defaultValue); setItems(prev => [...(prev || []), newItem]); };
+            const handleAddItem = () => { const newItem = { id: new Date().getTime() }; fields.forEach(field => newItem[field.key] = field.defaultValue); if (itemType === 'income') { newItem.customName = 'New Income'; } setItems(prev => [...(prev || []), newItem]); };
             const handleRemoveItem = (id) => { setItems(prev => prev.filter(item => item.id !== id)); };
             
             return (
@@ -178,21 +374,27 @@
                         return (
                             <div key={item.id} className="p-4 bg-gray-900/50 rounded-lg border border-gray-700">
                                 <div className="grid grid-cols-12 gap-x-4 items-start">
-                                    {fields.map(field => (
-                                        <div key={field.key} className={`col-span-12 ${field.className}`}>
-                                            <label className="text-xs text-gray-400 flex items-center">{field.label}{field.tooltip && <Tooltip text={field.tooltip} />}</label>
-                                            {field.type === 'select' ? (
-                                                <select value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
-                                                    {field.options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                                                </select>
-                                            ) : (
-                                                <input type={field.type || 'text'} value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md" placeholder={field.placeholder || ''} step={field.step || 'any'} />
-                                            )}
-                                            { (field.key === 'startYear' || field.key === 'year') && ageAtEvent !== null && ageAtEvent >= 0 && (
-                                                <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">(Age: {ageAtEvent})</div>
-                                            )}
-                                        </div>
-                                    ))}
+                                    {fields.map(field => {
+                                        if (field.dependsOn && item[field.dependsOn] !== field.showIf) {
+                                            return null;
+                                        }
+                                        const fieldLabel = item.type === 'Other' && field.key === 'customName' ? (item.customName || 'Item Name') : field.label;
+                                        return (
+                                            <div key={field.key} className={`col-span-12 ${field.className}`}>
+                                                <label className="text-xs text-gray-400 flex items-center">{fieldLabel}{field.tooltip && <Tooltip text={field.tooltip} />}</label>
+                                                {field.type === 'select' ? (
+                                                    <select value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md">
+                                                        {field.options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                                                    </select>
+                                                ) : (
+                                                    <input type={field.type || 'text'} value={item[field.key]} onChange={(e) => handleItemChange(item.id, field.key, e.target.value)} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md" placeholder={field.placeholder || ''} step={field.step || 'any'} />
+                                                )}
+                                                { (field.key === 'startYear' || field.key === 'year') && ageAtEvent !== null && ageAtEvent >= 0 && (
+                                                    <div className="text-xs text-gray-400 text-right h-4 pr-1 mt-1">(Age: {ageAtEvent})</div>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
                                     <div className="col-span-1 self-start pt-6"> 
                                         <button onClick={() => handleRemoveItem(item.id)} className="p-2 text-gray-400 hover:text-white hover:bg-red-700 rounded-full">
                                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
@@ -216,23 +418,18 @@
         const ComparisonResults = ({ scenarios, simulationResults }) => {
             const chartRef = useRef(null);
             const chartInstanceRef = useRef(null);
-
             const [selectedTableScenarioId, setSelectedTableScenarioId] = useState(scenarios.length > 0 ? scenarios[0].id : 'none');
             const colors = ['#34D399', '#F472B6', '#FBBF24'];
             const pointStyles = ['circle', 'triangle', 'star'];
             const shapeIcons = ['●', '▲', '★'];
-
             useEffect(() => {
                 if (!simulationResults || simulationResults.length === 0 || !chartRef.current) return;
                 if (chartInstanceRef.current) chartInstanceRef.current.destroy();
-                
                 const allYears = simulationResults.flatMap(r => r.yearlyData.map(d => d.year));
                 if (allYears.length === 0) return;
-
                 const minYear = Math.min(...allYears);
                 const maxYear = Math.max(...allYears);
                 const labels = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
-                
                 const datasets = simulationResults.map((result, index) => {
                     const scenario = scenarios[index];
                     const dataMap = new Map(result.yearlyData.map(d => [d.year, d.totalEndBalance]));
@@ -285,11 +482,8 @@
                     }
                 });
             }, [scenarios, simulationResults]); 
-
             const selectedResult = simulationResults.find((r, i) => scenarios[i].id === Number(selectedTableScenarioId));
-            
             if (!simulationResults || simulationResults.length === 0) return null;
-            
             return (
                 <div className="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700 mt-6">
                     <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">Scenario Comparison Results</h2>
@@ -325,7 +519,7 @@
                                         <th scope="col" className="px-4 py-3">Year (Age)</th>
                                         <th scope="col" className="px-4 py-3">Optimal Ratio (R/T/N)</th>
                                         <th scope="col" className="px-4 py-3">Gross Withdrawal</th>
-                                        <th scope="col" className="px-4 py-3">Tax Paid</th>
+                                        <th scope="col" className="px-4 py-3">Total Tax Paid</th>
                                         <th scope="col" className="px-4 py-3">End Balance</th>
                                     </tr>
                                 </thead>
@@ -353,7 +547,6 @@
             const selectedResult = useMemo(() => {
                 return simulationResults.find((r, i) => scenarios[i].id === Number(selectedScenarioId));
             }, [selectedScenarioId, simulationResults, scenarios]);
-
             useEffect(() => {
                 if (selectedResult && selectedResult.yearlyData.length > 0) {
                     const targetYear = selectedResult.yearlyData.find(d => d.age === 80)?.year;
@@ -362,23 +555,22 @@
                     setSelectedYear(null);
                 }
             }, [selectedResult]);
-
             if (!selectedResult) return null;
-
             const yearData = selectedResult.yearlyData.find(d => d.year === selectedYear);
             const prevYearData = selectedResult.yearlyData.find(d => d.year === selectedYear - 1);
             const nextYearData = selectedResult.yearlyData.find(d => d.year === selectedYear + 1);
-
+            
             const displayData = (data, field) => {
                 if (!data) return 'N/A';
                 if (field === 'balance') {
+                    if (data.rrspStartBalance === null || data.rrspStartBalance === undefined) return 'N/A';
                     return `${formatCurrency(data.rrspStartBalance)} / ${formatCurrency(data.tfsaStartBalance)} / ${formatCurrency(data.nonRegStartBalance)}`;
                 }
+                if (data[field] === null || data[field] === undefined) return 'N/A';
                 return formatCurrency(data[field]);
             };
 
             const displayRatio = (data) => data && data.optimalRatio ? `${data.optimalRatio.rrsp}% / ${data.optimalRatio.tfsa}% / ${data.optimalRatio.nonReg}%` : 'N/A';
-
             return (
                 <div className="bg-gray-900/50 p-6 rounded-xl shadow-lg border border-gray-700 mt-6">
                     <h2 className="text-xl md:text-2xl font-bold text-gray-200 mb-4 text-center">⚙️ Optimization Engine Dashboard (Verification)</h2>
@@ -416,16 +608,17 @@
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Target Net Withdrawal</td><td className="px-4 py-2">{displayData(prevYearData, 'targetNetWithdrawal')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'targetNetWithdrawal')}</td><td className="px-4 py-2">{displayData(nextYearData, 'targetNetWithdrawal')}</td></tr>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Optimal Ratio (R/T/N)</td><td className="px-4 py-2 font-mono">{displayRatio(prevYearData)}</td><td className="px-4 py-2 font-mono bg-blue-900/30">{displayRatio(yearData)}</td><td className="px-4 py-2 font-mono">{displayRatio(nextYearData)}</td></tr>
                                     <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Gross Withdrawal</td><td className="px-4 py-2">{displayData(prevYearData, 'grossWithdrawal')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'grossWithdrawal')}</td><td className="px-4 py-2">{displayData(nextYearData, 'grossWithdrawal')}</td></tr>
-                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Tax Paid</td><td className="px-4 py-2">{displayData(prevYearData, 'taxPaid')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'taxPaid')}</td><td className="px-4 py-2">{displayData(nextYearData, 'taxPaid')}</td></tr>
+                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold text-red-400">OAS Clawback</td><td className="px-4 py-2 text-red-400">{displayData(prevYearData, 'oasClawback')}</td><td className="px-4 py-2 bg-blue-900/30 text-red-300 font-bold">{displayData(yearData, 'oasClawback')}</td><td className="px-4 py-2 text-red-400">{displayData(nextYearData, 'oasClawback')}</td></tr>
+                                    <tr className="border-b border-gray-700"><td className="px-4 py-2 font-semibold">Total Tax Paid</td><td className="px-4 py-2">{displayData(prevYearData, 'taxPaid')}</td><td className="px-4 py-2 bg-blue-900/30">{displayData(yearData, 'taxPaid')}</td><td className="px-4 py-2">{displayData(nextYearData, 'taxPaid')}</td></tr>
                                 </tbody>
                             </table>
                         </div>
                         <h3 className="text-lg font-semibold text-gray-300 mt-6 mb-2">Formulas & Calculations for {selectedYear}</h3>
                         <div className="p-4 bg-gray-900 rounded-lg space-y-2 text-sm font-mono border border-gray-700">
-                            <p><span className="text-green-400">Taxable Income:</span> {formatCurrency(yearData.taxableIncome)} = {formatCurrency(yearData.recurringIncome)} (Recur Inc) + {formatCurrency(yearData.oneTimeIncome)} (One-Time Inc) + {formatCurrency(yearData.taxableWithdrawals.rrsp)} (RRSP) + {formatCurrency(yearData.taxableWithdrawals.nonReg)} (Non-Reg Gain)</p>
-                            <p><span className="text-yellow-400">Tax Paid:</span> {formatCurrency(yearData.taxPaid)} = Fed_Tax({formatCurrency(yearData.taxableIncome)}) + Prov_Tax({formatCurrency(yearData.taxableIncome)}) - Credits</p>
+                            <p><span className="text-green-400">Net Income for Clawback:</span> {formatCurrency(yearData.netIncomeForClawback)} = Non-OAS Income + Withdrawals</p>
+                            <p><span className="text-red-400">OAS Clawback:</span> {formatCurrency(yearData.oasClawback)} = MAX(0, (Net Income - Threshold) * 15%)</p>
+                            <p><span className="text-yellow-400">Total Tax Paid:</span> {formatCurrency(yearData.taxPaid)} = Regular Tax({formatCurrency(yearData.taxableIncome)}) + OAS Clawback</p>
                             <p><span className="text-cyan-400">Net Outflow:</span> {formatCurrency(yearData.targetNetWithdrawal)} (Spending) + {formatCurrency(yearData.taxPaid)} (Tax) = {formatCurrency(yearData.targetNetWithdrawal + yearData.taxPaid)}</p>
-                            <p><span className="text-cyan-400">Gross Withdrawal:</span> {formatCurrency(yearData.grossWithdrawal)} ≈ Net Outflow</p>
                         </div>
                         <h3 className="text-lg font-semibold text-gray-300 mt-6 mb-2">Optimization Test Results for {selectedYear} (Sorted by Best Score)</h3>
                         <div className="max-h-80 overflow-y-auto">
@@ -461,8 +654,8 @@
         // --- Main App Component ---
         const App = () => {
             const [scenarios, setScenarios] = useState(() => {
-                const saved = localStorage.getItem('retirementScenarios_Complete_v5_upgraded');
-                return saved ? JSON.parse(saved) : [createNewScenario('My Scenario')];
+                const saved = localStorage.getItem('retirementScenarios_v7_multiprovince');
+                return saved ? JSON.parse(saved) : [createNewScenario('My Scenario (ON)', 'ON')];
             });
             const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
             const [activeDataTab, setActiveDataTab] = useState('settings');
@@ -473,7 +666,7 @@
             const resultsRef = useRef(null);
 
             useEffect(() => {
-                localStorage.setItem('retirementScenarios_Complete_v5_upgraded', JSON.stringify(scenarios));
+                localStorage.setItem('retirementScenarios_v7_multiprovince', JSON.stringify(scenarios));
             }, [scenarios]);
 
             const activeScenario = scenarios.find(s => s.id === activeScenarioId) || scenarios[0];
@@ -482,362 +675,9 @@
                 setScenarios(prev => prev.map(s => s.id === activeScenarioId ? updater(s) : s));
             };
             
-            const handleAddScenario = () => { if (scenarios.length < 3) { const newScenario = createNewScenario(`Scenario ${scenarios.length + 1}`); setScenarios(prev => [...prev, newScenario]); setActiveScenarioId(newScenario.id); } };
+            const handleAddScenario = () => { if (scenarios.length < 3) { const newScenario = createNewScenario(`Scenario ${scenarios.length + 1} (ON)`, 'ON'); setScenarios(prev => [...prev, newScenario]); setActiveScenarioId(newScenario.id); } };
             const handleCopyScenario = () => { if (scenarios.length < 3) { const scenarioToCopy = scenarios.find(s => s.id === activeScenarioId); const newScenario = deepCopy(scenarioToCopy); newScenario.id = new Date().getTime(); newScenario.name = `${scenarioToCopy.name} (Copy)`; setScenarios(prev => [...prev, newScenario]); setActiveScenarioId(newScenario.id); } };
             const handleRemoveScenario = () => { if (scenarios.length > 1) { const newScenarios = scenarios.filter(s => s.id !== activeScenarioId); setScenarios(newScenarios); setActiveScenarioId(newScenarios[0].id); } };
-
-            // =================================================================================
-            // --- CORE LOGIC & SIMULATION ENGINE ---
-            // =================================================================================
-
-            /**
-             * Calculates tax and marginal rate.
-             * @returns {{tax: number, marginalRate: number}}
-             */
-            const calculateTax = (taxableIncome, year, startYear, taxInflationRate) => {
-                const inflationFactor = Math.pow(1 + taxInflationRate / 100, year - startYear);
-                const fedBrackets = [ { limit: 57375 * inflationFactor, rate: 0.15 }, { limit: 114750 * inflationFactor, rate: 0.205 }, { limit: 177882 * inflationFactor, rate: 0.26 }, { limit: 253414 * inflationFactor, rate: 0.29 }, { limit: Infinity, rate: 0.33 } ];
-                const onBrackets = [ { limit: 52886 * inflationFactor, rate: 0.0505 }, { limit: 105775 * inflationFactor, rate: 0.0915 }, { limit: 150000, rate: 0.1116 }, { limit: 220000, rate: 0.1216 }, { limit: Infinity, rate: 0.1316 } ];
-                const fedBPA = 16129 * inflationFactor; const onBPA = 12747 * inflationFactor;
-                
-                const calculateBracketTax = (income, brackets) => { let tax = 0; let remainingIncome = income; let lastLimit = 0; for (const bracket of brackets) { const currentLimit = bracket.limit; if (remainingIncome > 0) { const taxableInBracket = Math.min(remainingIncome, currentLimit - lastLimit); tax += taxableInBracket * bracket.rate; remainingIncome -= taxableInBracket; lastLimit = currentLimit; } else { break; } } return tax; };
-                
-                const fedTax = calculateBracketTax(taxableIncome, fedBrackets);
-                const onTax = calculateBracketTax(taxableIncome, onBrackets);
-                const fedCredit = Math.min(taxableIncome, fedBPA) * fedBrackets[0].rate;
-                const onCredit = Math.min(taxableIncome, onBPA) * onBrackets[0].rate;
-                const totalTax = Math.max(0, (fedTax + onTax) - (fedCredit + onCredit));
-
-                // --- Calculate Marginal Tax Rate ---
-                let marginalRate = 0;
-                let fedMarginal = 0;
-                let onMarginal = 0;
-                let lastLimitFed = 0;
-                for (const bracket of fedBrackets) {
-                    if (taxableIncome > lastLimitFed && taxableIncome <= bracket.limit) {
-                        fedMarginal = bracket.rate;
-                        break;
-                    }
-                    if(taxableIncome > bracket.limit) {
-                        fedMarginal = bracket.rate;
-                    }
-                    lastLimitFed = bracket.limit;
-                }
-                let lastLimitOn = 0;
-                for (const bracket of onBrackets) {
-                    if (taxableIncome > lastLimitOn && taxableIncome <= bracket.limit) {
-                        onMarginal = bracket.rate;
-                        break;
-                    }
-                     if(taxableIncome > bracket.limit) {
-                        onMarginal = bracket.rate;
-                    }
-                    lastLimitOn = bracket.limit;
-                }
-                marginalRate = fedMarginal + onMarginal;
-
-                return { tax: totalTax, marginalRate: marginalRate };
-            };
-
-            // --- UPGRADE 1: Accurate RRIF calculation ---
-            /**
-             * Calculates RRIF minimum withdrawal based on official CRA factors.
-             * This fixes the 'division by zero' bug at age 90 and improves accuracy.
-             */
-            const getRrifMinWithdrawal = (age, rrspBalance) => {
-                if (age < 71) {
-                    return 0;
-                }
-                // Source: Canada Revenue Agency (CRA) - RRIF Minimum Withdrawal Factors
-                const rrifFactors = {
-                    71: 0.0528, 72: 0.0540, 73: 0.0553, 74: 0.0567, 75: 0.0582,
-                    76: 0.0598, 77: 0.0617, 78: 0.0636, 79: 0.0658, 80: 0.0682,
-                    81: 0.0708, 82: 0.0738, 83: 0.0771, 84: 0.0808, 85: 0.0851,
-                    86: 0.0899, 87: 0.0955, 88: 0.1021, 89: 0.1099, 90: 0.1192,
-                    91: 0.1306, 92: 0.1449, 93: 0.1634, 94: 0.1879
-                };
-                const factor = (age >= 95) ? 0.20 : rrifFactors[age];
-                return rrspBalance * factor;
-            };
-
-            // --- UPGRADE 2: Precise gross withdrawal calculation using Newton's Method ---
-            /**
-             * Solves for the exact gross withdrawal needed to cover net spending and taxes.
-             * Replaces the less precise iterative `while` loop.
-             */
-            const solveForGrossWithdrawal = (params) => {
-                const { targetNetWithdrawal, ratio, rrifMinWithdrawal, startBalances, baseTaxableIncome, year, startYear, taxInflationRate, nonRegGainAssumption } = params;
-
-                let grossWithdrawal = targetNetWithdrawal; // Initial guess
-
-                for (let i = 0; i < 15; i++) { // Max 15 iterations to prevent infinite loops
-                    let w = {
-                        rrsp: Math.max(rrifMinWithdrawal, grossWithdrawal * (ratio.rrsp / 100)),
-                        tfsa: grossWithdrawal * (ratio.tfsa / 100),
-                        nonReg: grossWithdrawal * (ratio.nonReg / 100)
-                    };
-                    
-                    if (w.rrsp > startBalances.rrsp || w.tfsa > startBalances.tfsa || w.nonReg > startBalances.nonReg) {
-                        return Infinity; // This strategy is not possible with current balances
-                    }
-
-                    const nonRegTaxableGain = w.nonReg * (nonRegGainAssumption / 100) * 0.5;
-                    const taxableIncome = baseTaxableIncome + w.rrsp + nonRegTaxableGain;
-                    
-                    const { tax: taxPaid, marginalRate } = calculateTax(taxableIncome, year, startYear, taxInflationRate);
-                    
-                    // f(x) = grossWithdrawal - taxPaid - targetNetWithdrawal. We want to find x where f(x) = 0.
-                    const fx = grossWithdrawal - taxPaid - targetNetWithdrawal;
-
-                    if (Math.abs(fx) < 0.01) { // If we're close enough, we're done
-                        return grossWithdrawal;
-                    }
-
-                    // f'(x) = derivative of f(x)
-                    const dfx = 1 - (marginalRate * ((ratio.rrsp / 100) + (ratio.nonReg / 100 * (nonRegGainAssumption / 100) * 0.5)));
-
-                    // Avoid division by zero if the derivative is flat
-                    if (Math.abs(dfx) < 1e-6) {
-                        grossWithdrawal += fx > 0 ? -100 : 100; // Nudge the value and try again
-                        continue;
-                    }
-                    
-                    // Newton's method: x_new = x_old - f(x) / f'(x)
-                    grossWithdrawal = grossWithdrawal - fx / dfx;
-                }
-
-                return grossWithdrawal; // Return best guess after iterations
-            };
-
-            const getStrategicContext = (age, balances, totalAssets, marginalTaxRate) => {
-                let phase;
-                if (age < 71) phase = "Pre-RRIF Bridge";
-                else if (age <= 80) phase = "Early RRIF";
-                else if (age <= 90) phase = "Mid RRIF";
-                else phase = "Late RRIF";
-
-                let taxBracket;
-                if (marginalTaxRate < 0.25) taxBracket = "Low";
-                else if (marginalTaxRate < 0.35) taxBracket = "Medium";
-                else if (marginalTaxRate < 0.45) taxBracket = "High";
-                else taxBracket = "Very High";
-
-                const tfsaRatio = totalAssets > 0 ? (balances.tfsa / totalAssets) * 100 : 0;
-                let tfsaLevel;
-                if (tfsaRatio < 15) tfsaLevel = "Low";
-                else if (tfsaRatio < 40) tfsaLevel = "Medium";
-                else tfsaLevel = "High";
-
-                return {
-                    phase,
-                    taxBracket,
-                    tfsaLevel,
-                    description: `Phase: ${phase}, Tax: ${taxBracket}, TFSA: ${tfsaLevel}`
-                };
-            };
-
-            const evaluateStrategy = (attempt, startBalances, context) => {
-                const { taxPaid, grossWithdrawal, finalBalances } = attempt;
-                const weights = { tax: 1.0, withdrawal: 0.5, tfsaPreservation: 0.2 };
-                if (context.taxBracket === "High" || context.taxBracket === "Very High") { weights.tax = 2.0; }
-                if (context.tfsaLevel === "High") { weights.tfsaPreservation = 1.5; }
-                if (context.phase === "Pre-RRIF Bridge" && context.taxBracket !== "High") { weights.tax = 0.8; }
-                const taxScore = taxPaid;
-                const withdrawalScore = grossWithdrawal;
-                const tfsaPreservationScore = (startBalances.tfsa - finalBalances.tfsa);
-                const totalScore = (taxScore * weights.tax) + (withdrawalScore * weights.withdrawal) + (tfsaPreservationScore * weights.tfsaPreservation);
-                let reason = "Optimal balance found.";
-                if (weights.tax > 1) reason = "Prioritized tax minimization.";
-                else if (weights.tfsaPreservation > 1) reason = "Prioritized TFSA preservation.";
-                else if (weights.tax < 1) reason = "Opportunistic RRSP withdrawal for tax smoothing.";
-                return { totalScore, scores: { tax: taxScore, withdrawal: withdrawalScore, tfsa: tfsaPreservationScore }, reason };
-            };
-            
-            const runSingleSimulation = (scenario, isMonteCarloRun = false) => {
-                const { settings, expenses, incomes, oneTimeEvents, marketCrashes } = scenario;
-                let balances = { rrsp: getParsedValue(settings.rrspBalance), tfsa: getParsedValue(settings.tfsaBalance), nonReg: getParsedValue(settings.nonRegisteredBalance) };
-                const yearlyData = [];
-                const startYear = getParsedValue(settings.startYear); const endYear = getParsedValue(settings.endYear); const birthYear = getParsedValue(settings.birthYear);
-                let fundDepletionYear = endYear + 1;
-                const withdrawalRatios = [];
-                for (let rrsp = 10; rrsp >= 0; rrsp--) { for (let tfsa = 10 - rrsp; tfsa >= 0; tfsa--) { let nonReg = 10 - rrsp - tfsa; withdrawalRatios.push({ rrsp: rrsp * 10, tfsa: tfsa * 10, nonReg: nonReg * 10 }); } }
-                
-                for (let currentYear = startYear; currentYear <= endYear; currentYear++) {
-                    const age = currentYear - birthYear;
-                    const startBalances = deepCopy(balances);
-
-                    let currentInvestmentReturn;
-                    if (isMonteCarloRun) {
-                        currentInvestmentReturn = generateNormalRandom(getParsedValue(settings.annualMedianReturn), getParsedValue(settings.volatility));
-                    } else if (settings.volatilityMode === 'auto') {
-                        currentInvestmentReturn = getParsedValue(settings.annualMedianReturn);
-                    } else {
-                        currentInvestmentReturn = getParsedValue(settings.investmentReturn);
-                    }
-                    
-                    const totalRecurringExpense = (expenses || []).reduce((sum, exp) => {
-                        if (currentYear >= getParsedValue(exp.startYear)) {
-                            const compoundedAmount = getParsedValue(exp.amount) * Math.pow(1 + getParsedValue(exp.growthRate) / 100, currentYear - TODAY_YEAR);
-                            return sum + compoundedAmount;
-                        }
-                        return sum;
-                    }, 0);
-                    const oneTimeExpense = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'expense' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
-                    let targetNetWithdrawal = totalRecurringExpense + oneTimeExpense;
-                    
-                    const recurringIncome = (incomes || []).reduce((sum, inc) => {
-                        if (currentYear >= getParsedValue(inc.startYear)) {
-                            const compoundedAmount = getParsedValue(inc.amount) * Math.pow(1 + getParsedValue(inc.growthRate) / 100, currentYear - TODAY_YEAR);
-                            return sum + compoundedAmount;
-                        }
-                        return sum;
-                    }, 0);
-                    
-                    const oneTimeIncome = (oneTimeEvents || []).reduce((sum, e) => (e.type === 'income' && getParsedValue(e.year) === currentYear) ? sum + getParsedValue(e.amount) : sum, 0);
-                    
-                    let rrifMinWithdrawal = getRrifMinWithdrawal(age, startBalances.rrsp);
-                    
-                    const totalStartAssets = startBalances.rrsp + startBalances.tfsa + startBalances.nonReg;
-                    const baseTaxableIncome = recurringIncome + oneTimeIncome;
-                    const baseTaxInfo = calculateTax(baseTaxableIncome, currentYear, startYear, getParsedValue(settings.taxInflationRate));
-                    const strategicContext = getStrategicContext(age, startBalances, totalStartAssets, baseTaxInfo.marginalRate);
-                    
-                    let bestAttempt = { totalScore: Infinity, ratio: null, grossWithdrawal: 0, taxPaid: 0, taxableIncome: 0, taxableWithdrawals: {}, finalWithdrawals: {}, scores: {}, reason: '', marginalTaxRate: 0 };
-                    const optimizationAttempts = [];
-
-                    for (const ratio of withdrawalRatios) {
-                        const grossWithdrawal = solveForGrossWithdrawal({
-                            targetNetWithdrawal, ratio, rrifMinWithdrawal, startBalances,
-                            baseTaxableIncome, year: currentYear, startYear,
-                            taxInflationRate: getParsedValue(settings.taxInflationRate),
-                            nonRegGainAssumption: getParsedValue(settings.nonRegGainAssumption)
-                        });
-                        
-                        const attemptResult = { ratio, cost: grossWithdrawal, status: 'Failed', evaluation: null };
-
-                        if (grossWithdrawal !== Infinity) {
-                            attemptResult.status = 'Success';
-                            
-                            const finalRRSP = Math.max(rrifMinWithdrawal, grossWithdrawal * (ratio.rrsp / 100));
-                            const finalTFSA = grossWithdrawal * (ratio.tfsa / 100);
-                            const finalNonReg = grossWithdrawal * (ratio.nonReg / 100);
-                            const currentWithdrawals = { rrsp: finalRRSP, tfsa: finalTFSA, nonReg: finalNonReg };
-                            
-                            const nonRegTaxableGain = currentWithdrawals.nonReg * (getParsedValue(settings.nonRegGainAssumption) / 100) * 0.5;
-                            const currentTaxableIncome = baseTaxableIncome + currentWithdrawals.rrsp + nonRegTaxableGain;
-                            const { tax: currentTaxPaid, marginalRate: currentMarginalRate } = calculateTax(currentTaxableIncome, currentYear, startYear, getParsedValue(settings.taxInflationRate));
-                            
-                            const tempBalancesAfterWithdrawal = {
-                                rrsp: startBalances.rrsp - currentWithdrawals.rrsp,
-                                tfsa: startBalances.tfsa - currentWithdrawals.tfsa,
-                                nonReg: startBalances.nonReg - currentWithdrawals.nonReg + recurringIncome + oneTimeIncome
-                            };
-
-                            const attemptFinalBalances = {
-                                rrsp: tempBalancesAfterWithdrawal.rrsp * (1 + currentInvestmentReturn / 100),
-                                tfsa: tempBalancesAfterWithdrawal.tfsa * (1 + currentInvestmentReturn / 100),
-                                nonReg: tempBalancesAfterWithdrawal.nonReg * (1 + currentInvestmentReturn / 100)
-                            };
-                            
-                            const attemptForEval = { taxPaid: currentTaxPaid, grossWithdrawal, finalBalances: attemptFinalBalances };
-                            
-                            const evaluation = evaluateStrategy(attemptForEval, startBalances, strategicContext);
-                            attemptResult.evaluation = evaluation;
-
-                            if (evaluation.totalScore < bestAttempt.totalScore) {
-                                bestAttempt = {
-                                    totalScore: evaluation.totalScore, ratio, grossWithdrawal, taxPaid: currentTaxPaid, 
-                                    taxableIncome: currentTaxableIncome, marginalRate: currentMarginalRate,
-                                    taxableWithdrawals: { rrsp: currentWithdrawals.rrsp, nonReg: nonRegTaxableGain },
-                                    finalWithdrawals: currentWithdrawals, scores: evaluation.scores, reason: evaluation.reason
-                                };
-                            }
-                        }
-                        if (!isMonteCarloRun) optimizationAttempts.push(attemptResult);
-                    }
-
-                    // --- MODIFICATION START: Show the year of depletion ---
-                    if (bestAttempt.totalScore === Infinity) {
-                        if(fundDepletionYear > endYear) {
-                           fundDepletionYear = currentYear;
-                        }
-                        // Add a final row showing the state at the beginning of the depletion year.
-                        if (!isMonteCarloRun) {
-                            const depletionData = {
-                                year: currentYear,
-                                age,
-                                rrspStartBalance: startBalances.rrsp,
-                                tfsaStartBalance: startBalances.tfsa,
-                                nonRegStartBalance: startBalances.nonReg,
-                                targetNetWithdrawal, // Show how much was needed this year
-                                recurringIncome,
-                                oneTimeIncome,
-                                optimalRatio: null, // No optimal ratio found
-                                grossWithdrawal: null, // Could not withdraw
-                                taxPaid: null, // Could not pay tax
-                                totalEndBalance: 0, // Funds depleted
-                                taxableIncome: baseTaxableIncome,
-                                taxableWithdrawals: { rrsp: 0, nonReg: 0 },
-                                finalWithdrawals: { rrsp: 0, tfsa: 0, nonReg: 0 },
-                                optimizationAttempts,
-                                strategicContext: strategicContext.description,
-                                decisionReason: 'Funds depleted: Insufficient assets to cover expenses and taxes.',
-                                multiObjectiveScores: {},
-                                marginalTaxRate: baseTaxInfo.marginalRate,
-                            };
-                            yearlyData.push(depletionData);
-                        }
-                        break; // Exit the simulation loop for this scenario
-                    }
-                    // --- MODIFICATION END ---
-                    
-                    if (bestAttempt.ratio && !isMonteCarloRun) { 
-                        const optimalAttempt = optimizationAttempts.find(a => a.ratio === bestAttempt.ratio);
-                        if (optimalAttempt) optimalAttempt.status = 'Optimal';
-                    }
-                    
-                    if (bestAttempt.ratio) { 
-                        balances.rrsp -= bestAttempt.finalWithdrawals.rrsp; 
-                        balances.tfsa -= bestAttempt.finalWithdrawals.tfsa; 
-                        balances.nonReg -= bestAttempt.finalWithdrawals.nonReg; 
-                    }
-                    
-                    balances.nonReg += recurringIncome + oneTimeIncome;
-                    
-                    const growthRate = 1 + currentInvestmentReturn / 100;
-                    balances.rrsp *= growthRate; 
-                    balances.tfsa *= growthRate; 
-                    balances.nonReg *= growthRate;
-
-                    if (settings.volatilityMode === 'discrete' && !isMonteCarloRun) {
-                        (marketCrashes || []).forEach(crash => {
-                            const crashStartYear = getParsedValue(crash.startYear); const duration = getParsedValue(crash.duration);
-                            if (duration > 0 && currentYear >= crashStartYear && currentYear < crashStartYear + duration) {
-                                const annualMultiplier = Math.pow(1 + (-Math.abs(getParsedValue(crash.totalDecline)) / 100), 1 / duration);
-                                balances.rrsp *= annualMultiplier; balances.tfsa *= annualMultiplier; balances.nonReg *= annualMultiplier;
-                            }
-                        });
-                    }
-                    const totalEndBalance = balances.rrsp + balances.tfsa + balances.nonReg;
-                    
-                    const dataToPush = { year: currentYear, age, totalEndBalance: Math.max(0, totalEndBalance) };
-                    if (!isMonteCarloRun) {
-                        Object.assign(dataToPush, { 
-                            rrspStartBalance: startBalances.rrsp, tfsaStartBalance: startBalances.tfsa, nonRegStartBalance: startBalances.nonReg, 
-                            targetNetWithdrawal, recurringIncome, oneTimeIncome, 
-                            optimalRatio: bestAttempt.ratio, grossWithdrawal: bestAttempt.grossWithdrawal, taxPaid: bestAttempt.taxPaid, 
-                            taxableIncome: bestAttempt.taxableIncome, taxableWithdrawals: bestAttempt.taxableWithdrawals, 
-                            finalWithdrawals: bestAttempt.finalWithdrawals, optimizationAttempts,
-                            strategicContext: strategicContext.description,
-                            decisionReason: bestAttempt.reason,
-                            multiObjectiveScores: bestAttempt.scores,
-                            marginalTaxRate: bestAttempt.marginalRate,
-                        });
-                    }
-                    yearlyData.push(dataToPush);
-                }
-                return { yearlyData, fundDepletionYear };
-            };
 
             const runAllSimulationsForComparison = () => {
                 setIsCalculating(true); setComparisonResults([]); setMonteCarloResults(null);
@@ -857,42 +697,31 @@
                         const result = runSingleSimulation(activeScenario, true);
                         allRunsYearlyData.push(result.yearlyData);
                     }
-                    const finalBalances = allRunsYearlyData.map(run => {
-                        const lastYear = run[run.length - 1];
-                        return lastYear ? lastYear.totalEndBalance : 0;
-                    });
-
+                    const finalBalances = allRunsYearlyData.map(run => { const lastYear = run[run.length - 1]; return lastYear ? lastYear.totalEndBalance : 0; });
                     finalBalances.sort((a, b) => a - b);
                     const successCount = finalBalances.filter(balance => balance > 0).length;
-                    
                     const p10_path = [], p50_path = [], p90_path = [];
-                    
-                    const startYear = getParsedValue(activeScenario.settings.startYear);
-                    const endYear = getParsedValue(activeScenario.settings.endYear);
-                    const totalYearsInPlan = endYear - startYear + 1;
-
+                    const startYear = getParsedValue(activeScenario.settings.startYear); const endYear = getParsedValue(activeScenario.settings.endYear); const totalYearsInPlan = endYear - startYear + 1;
                     for (let i = 0; i < totalYearsInPlan; i++) {
                         const yearlyBalances = allRunsYearlyData.map(run => (run[i] ? run[i].totalEndBalance : 0)).sort((a, b) => a - b);
                         p10_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.1)]);
                         p50_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.5)]);
                         p90_path.push(yearlyBalances[Math.floor(NUM_SIMULATIONS * 0.9)]);
                     }
-
-                    setMonteCarloResults({
-                        successRate: (successCount / NUM_SIMULATIONS) * 100, successCount,
-                        finalBalances: { p10: finalBalances[Math.floor(NUM_SIMULATIONS * 0.1)], p50: finalBalances[Math.floor(NUM_SIMULATIONS * 0.5)], p90: finalBalances[Math.floor(NUM_SIMULATIONS * 0.9)], },
-                        processedPlotData: { p10: p10_path, p50: p50_path, p90: p90_path },
-                        startYear: getParsedValue(activeScenario.settings.startYear),
-                        endYear: getParsedValue(activeScenario.settings.endYear),
-                        simulationCount: NUM_SIMULATIONS
-                    });
+                    setMonteCarloResults({ successRate: (successCount / NUM_SIMULATIONS) * 100, successCount, finalBalances: { p10: finalBalances[Math.floor(NUM_SIMULATIONS * 0.1)], p50: finalBalances[Math.floor(NUM_SIMULATIONS * 0.5)], p90: finalBalances[Math.floor(NUM_SIMULATIONS * 0.9)], }, processedPlotData: { p10: p10_path, p50: p50_path, p90: p90_path }, startYear, endYear, simulationCount: NUM_SIMULATIONS });
                     setIsCalculatingMC(false);
                     resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
                 }, 500);
             };
             
             const expenseFields = [ { key: 'name', label: 'Item Name', placeholder: 'e.g., Housing', className: 'sm:col-span-7', defaultValue: '' }, { key: 'startYear', label: 'Start Year', type: 'number', placeholder: '2031', className: 'sm:col-span-4', defaultValue: activeScenario.settings.startYear }, { key: 'amount', label: "Annual Cost", type: 'number', placeholder: '24000', className: 'sm:col-span-7', defaultValue: 0 }, { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '3', step: '0.1', className: 'sm:col-span-4', defaultValue: 3 } ];
-            const incomeFields = [ { key: 'name', label: 'Item Name', placeholder: 'e.g., CPP Pension', className: 'sm:col-span-7', defaultValue: '' }, { key: 'startYear', label: 'Start Year', type: 'number', placeholder: '2045', className: 'sm:col-span-4', defaultValue: TODAY_YEAR + 20 }, { key: 'amount', label: "Annual Income", type: 'number', placeholder: '15000', className: 'sm:col-span-7', defaultValue: 0 }, { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '2.5', step: '0.1', className: 'sm:col-span-4', defaultValue: 2.5 } ];
+            const incomeFields = [
+                { key: 'type', label: 'Income Type', type: 'select', options: [ {value: 'OAS', label: 'OAS (Old Age Security)'}, {value: 'CPP', label: 'CPP (Canada Pension Plan)'}, {value: 'GIS', label: 'GIS (Guaranteed Income Supplement)'}, {value: 'Other', label: 'Other Income'} ], className: 'sm:col-span-11', defaultValue: 'Other' },
+                { key: 'customName', label: 'Custom Name', placeholder: 'e.g., Rental Income', className: 'sm:col-span-7', defaultValue: 'Custom Income', dependsOn: 'type', showIf: 'Other' },
+                { key: 'startYear', label: 'Start Year', type: 'number', placeholder: '2045', className: 'sm:col-span-4', defaultValue: TODAY_YEAR + 20 },
+                { key: 'amount', label: "Annual Income", type: 'number', placeholder: '15000', className: 'sm:col-span-7', defaultValue: 0 },
+                { key: 'growthRate', label: 'Growth Rate (%)', type: 'number', placeholder: '2.5', step: '0.1', className: 'sm:col-span-4', defaultValue: 2.5 }
+            ];
             const oneTimeEventFields = [ { key: 'name', label: 'Event Name', placeholder: 'e.g., Car Purchase', className: 'sm:col-span-7', defaultValue: '' }, { key: 'type', label: 'Type', type: 'select', options: [{value: 'income', label: 'Income'}, {value: 'expense', label: 'Expense'}], className: 'sm:col-span-4', defaultValue: 'expense' }, { key: 'amount', label: 'Amount', type: 'number', placeholder: '40000', className: 'sm:col-span-7', defaultValue: 0 }, { key: 'year', label: 'Year of Event', type: 'number', placeholder: '2035', className: 'sm:col-span-4', defaultValue: TODAY_YEAR + 10 } ];
             const marketCrashFields = [ { key: 'startYear', label: 'Crash Start Year', type: 'number', placeholder: TODAY_YEAR + 10, className: 'sm:col-span-4', defaultValue: TODAY_YEAR + 10 }, { key: 'duration', label: 'Duration (Years)', type: 'number', placeholder: '2', className: 'sm:col-span-3', defaultValue: 1 }, { key: 'totalDecline', label: 'Total Decline (%)', type: 'number', placeholder: '30', className: 'sm:col-span-4', defaultValue: 20 } ];
             const dataTabs = { settings: { label: 'General Settings' }, expenses: { label: 'Recurring Expenses' }, incomes: { label: 'Recurring Incomes' }, oneTime: { label: 'One-Time Events' }, volatility: { label: 'Market Volatility' } };
@@ -903,7 +732,7 @@
 
             return (
                 <div className="max-w-screen-lg mx-auto p-4 sm:p-6 lg:p-8">
-                    <header className="text-center mb-6"><h1 className="text-3xl sm:text-4xl font-bold">Upgraded Intelligent Retirement Planner</h1><p className="text-gray-400 mt-2">Find your optimal withdrawal strategy and validate your plan's robustness.</p></header>
+                    <header className="text-center mb-6"><h1 className="text-3xl sm:text-4xl font-bold">Intelligent Retirement Planner</h1><p className="text-gray-400 mt-2">Multi-Province & OAS Clawback Optimization</p></header>
                     <ExplanationAccordion />
                     
                     <div className="p-4 bg-gray-900 rounded-xl mb-6 border border-gray-700">
@@ -924,6 +753,24 @@
                         
                         <div className={activeDataTab === 'settings' ? '' : 'hidden'}>
                              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                                <div>
+                                    <h3 className="text-lg font-semibold text-gray-300 mb-2">Location</h3>
+                                    <div>
+                                        <label className="text-xs text-gray-400">Province of Residence</label>
+                                        <select 
+                                            value={activeScenario.settings.province} 
+                                            onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, province: e.target.value}}))} 
+                                            className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"
+                                        >
+                                            <option value="ON">Ontario (ON)</option>
+                                            <option value="BC">British Columbia (BC)</option>
+                                            <option value="AB">Alberta (AB)</option>
+                                            <option value="SK">Saskatchewan (SK)</option>
+                                            <option value="MB">Manitoba (MB)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div/> 
                                 <div>
                                     <h3 className="text-lg font-semibold text-gray-300 mb-2">Timeline</h3>
                                     <div className="grid grid-cols-3 gap-2">
@@ -950,11 +797,11 @@
                                 </div>
                                 <div><h3 className="text-lg font-semibold text-gray-300 mb-2">Avg. Annual Return</h3><div><label className="text-xs text-gray-400">Return Rate (%) - for Discrete Mode</label><input type="number" value={activeScenario.settings.investmentReturn} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, investmentReturn: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div>
                                 <div className="md:col-span-2"><h3 className="text-lg font-semibold text-gray-300 mb-2">Initial Balances</h3><div className="grid grid-cols-1 md:grid-cols-3 gap-2"><div><label className="text-xs text-gray-400">RRSP/RRIF</label><input type="number" value={activeScenario.settings.rrspBalance} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, rrspBalance: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div><div><label className="text-xs text-gray-400">TFSA</label><input type="number" value={activeScenario.settings.tfsaBalance} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, tfsaBalance: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div><div><label className="text-xs text-gray-400">Non-Registered</label><input type="number" value={activeScenario.settings.nonRegisteredBalance} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, nonRegisteredBalance: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div></div>
-                                <div className="md:col-span-2"><h3 className="text-lg font-semibold text-gray-300 mb-2">Advanced Assumptions</h3><div className="grid grid-cols-1 md:grid-cols-2 gap-2"><div><label className="text-xs text-gray-400 flex items-center">Non-Reg Gain Assumption<Tooltip text="Select the percentage of withdrawals from the Non-Registered account that is considered a capital gain. The remainder is treated as a tax-free return of principal." /></label><select value={activeScenario.settings.nonRegGainAssumption} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, nonRegGainAssumption: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"><option value="30">Conservative (30%)</option><option value="50">Neutral (50%)</option><option value="70">Aggressive (70%)</option></select></div><div><label className="text-xs text-gray-400 flex items-center">Tax Bracket Inflation (%)<Tooltip text="The expected annual inflation rate for government tax brackets and the Basic Personal Amount (BPA). This operates independently of the growth rates for your personal income/expenses." /></label><input type="number" value={activeScenario.settings.taxInflationRate} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, taxInflationRate: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div></div>
+                                <div className="md:col-span-2"><h3 className="text-lg font-semibold text-gray-300 mb-2">Advanced Assumptions</h3><div className="grid grid-cols-1 md:grid-cols-2 gap-2"><div><label className="text-xs text-gray-400 flex items-center">Non-Reg Gain Assumption<Tooltip text="Select the percentage of withdrawals from the Non-Registered account that is considered a capital gain. The remainder is treated as a tax-free return of principal." /></label><select value={activeScenario.settings.nonRegGainAssumption} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, nonRegGainAssumption: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"><option value="30">Conservative (30%)</option><option value="50">Neutral (50%)</option><option value="70">Aggressive (70%)</option></select></div><div><label className="text-xs text-gray-400 flex items-center">Tax Bracket Inflation (%)<Tooltip text="The expected annual inflation rate for government tax brackets, personal amounts, and OAS threshold. This operates independently of the growth rates for your personal income/expenses." /></label><input type="number" value={activeScenario.settings.taxInflationRate} onChange={(e) => updateActiveScenario(s => ({...s, settings: {...s.settings, taxInflationRate: e.target.value}}))} className="w-full mt-1 p-2 border bg-gray-700 border-gray-600 text-white rounded-md"/></div></div></div>
                             </div>
                         </div>
                         <div className={activeDataTab === 'expenses' ? '' : 'hidden'}><DataEntryTab items={activeScenario.expenses} setItems={(updater) => updateActiveScenario(s => ({...s, expenses: updater(s.expenses)}))} fields={expenseFields} birthYear={activeScenario.settings.birthYear} /></div>
-                        <div className={activeDataTab === 'incomes' ? '' : 'hidden'}><DataEntryTab items={activeScenario.incomes} setItems={(updater) => updateActiveScenario(s => ({...s, incomes: updater(s.incomes)}))} fields={incomeFields} birthYear={activeScenario.settings.birthYear} /></div>
+                        <div className={activeDataTab === 'incomes' ? '' : 'hidden'}><DataEntryTab items={activeScenario.incomes} setItems={(updater) => updateActiveScenario(s => ({...s, incomes: updater(s.incomes)}))} fields={incomeFields} birthYear={activeScenario.settings.birthYear} itemType="income" /></div>
                         <div className={activeDataTab === 'oneTime' ? '' : 'hidden'}><DataEntryTab items={activeScenario.oneTimeEvents} setItems={(updater) => updateActiveScenario(s => ({...s, oneTimeEvents: updater(s.oneTimeEvents)}))} fields={oneTimeEventFields} birthYear={activeScenario.settings.birthYear} /></div>
                         <div className={activeDataTab === 'volatility' ? '' : 'hidden'}>
                             <VolatilityTab scenario={activeScenario} updateScenario={updateActiveScenario} runMonteCarloTest={runMonteCarloTest} isCalculatingMC={isCalculatingMC} clearMCResults={() => setMonteCarloResults(null)} marketCrashFields={marketCrashFields} />
